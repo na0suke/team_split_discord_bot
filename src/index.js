@@ -158,6 +158,23 @@ if (process.argv[2] === 'register' || process.argv[2] === 'register-global') {
   })().catch((e) => { console.error(e); process.exit(1); });
 }
 
+// ★ グローバルコマンドを全消去
+if (process.argv[2] === 'clear-global') {
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
+  (async () => {
+    let appId = CLIENT_ID;
+    if (!appId) {
+      const tmp = new Client({ intents: [] });
+      await tmp.login(TOKEN);
+      appId = tmp.user.id;
+      await tmp.destroy();
+    }
+    await rest.put(Routes.applicationCommands(appId), { body: [] });
+    console.log('Global commands cleared.');
+    process.exit(0);
+  })().catch((e) => { console.error(e); process.exit(1); });
+}
+
 // 複数ギルド一括登録（追加機能）
 if (process.argv[2] === 'guild-register') {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
