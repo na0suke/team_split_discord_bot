@@ -3,8 +3,9 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "register": "node src/index.js register"
+    "start": "node index.js",
+    "register": "node index.js register",
+    "register:global": "node src/index.js register-global"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",
