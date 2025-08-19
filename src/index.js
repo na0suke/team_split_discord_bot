@@ -471,7 +471,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // 参加者表へ追加
     addParticipant.run(gid, row.message_id, uid, nameArg);
-    return interaction.reply(`**${nameArg}** を参加者に追加しました（ID: \`${uid}\`${pointsArg!=null?`, ⭐${pointsArg}`:''}）。`);
+    return interaction.reply(`**${nameArg}** を参加者に追加しました${pointsArg!=null?`（⭐${pointsArg}）`:''}。`);
   }
 });
 
