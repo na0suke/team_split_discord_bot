@@ -1,30 +1,47 @@
+// src/db.js
 import Database from 'better-sqlite3';
 
 const db = new Database('./bot.db');
 
-// --- 既存スキーマを調べる（users に guild_id が無い／主キーが user_id 単独なら移行） ---
-function needUsersMigration() {
-  const cols = db.prepare(`PRAGMA table_info(users)`).all();
-  const hasGuild = cols.some(c => c.name === 'guild_id');
-  if (!hasGuild) return true;
-
-  // 複合主キーか確認（SQLite は PRAGMA からは主キー複合の判定が難しいので index で代替確認）
-  const idx = db.prepare(`PRAGMA index_list(users)`).all();
-  const hasComposite = idx.some(i => i.origin === 'pk' || /guild_id.*user_id|user_id.*guild_id/i.test(i.name));
-  // 既存テーブルが guild_id 列はあるけど user_id 単独主キーのまま、というケースを移行対象にする
-  return !hasComposite;
+// --- テーブル存在ヘルパー ---
+function tableExists(name) {
+  const r = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
+  return !!r;
 }
 
+// --- users の現状把握（ギルド列の有無） ---
+function usersHasGuildId() {
+  if (!tableExists('users')) return false;
+  const cols = db.prepare(`PRAGMA table_info(users)`).all();
+  return cols.some(c => c.name === 'guild_id');
+}
+
+// === マイグレーション ===
+// 1) users が無ければ、ギルド対応の新スキーマを直接作成
+// 2) users があるが guild_id が無ければ、users_new を作ってコピー → users を入替
 db.exec('PRAGMA foreign_keys=OFF');
 db.transaction(() => {
-  if (needUsersMigration()) {
-    // 旧 users を読み出し
+  if (!tableExists('users')) {
+    // 新規作成（ギルド対応）
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        guild_id   TEXT NOT NULL,
+        user_id    TEXT NOT NULL,
+        username   TEXT,
+        points     INTEGER DEFAULT 300,
+        wins       INTEGER DEFAULT 0,
+        losses     INTEGER DEFAULT 0,
+        win_streak INTEGER DEFAULT 0,
+        PRIMARY KEY (guild_id, user_id)
+      );
+    `);
+  } else if (!usersHasGuildId()) {
+    // 旧 users → 新 users へ移行
     const oldRows = (() => {
       try { return db.prepare(`SELECT * FROM users`).all(); }
       catch { return []; }
     })();
 
-    // 新 users（複合PK）を作る
     db.exec(`
       CREATE TABLE IF NOT EXISTS users_new (
         guild_id   TEXT NOT NULL,
@@ -38,11 +55,11 @@ db.transaction(() => {
       );
     `);
 
-    // 旧→新 へコピー（guild_id は仮に 'global' を入れる）
     const ins = db.prepare(`
       INSERT OR IGNORE INTO users_new (guild_id, user_id, username, points, wins, losses, win_streak)
       VALUES (@guild_id, @user_id, @username, COALESCE(@points,300), COALESCE(@wins,0), COALESCE(@losses,0), COALESCE(@win_streak,0))
     `);
+
     for (const r of oldRows) {
       ins.run({
         guild_id: r.guild_id ?? 'global',
@@ -55,7 +72,7 @@ db.transaction(() => {
       });
     }
 
-    // 旧表リネーム → 新表を正式名に
+    // 旧表を置き換え（users が存在する時だけ実行）
     db.exec(`
       ALTER TABLE users RENAME TO users_old;
       ALTER TABLE users_new RENAME TO users;
@@ -63,7 +80,7 @@ db.transaction(() => {
     `);
   }
 
-  // 他テーブルも guild_id 付きで生成（存在しなければ）
+  // 他テーブル（ギルド対応で作成）
   db.exec(`
     CREATE TABLE IF NOT EXISTS signup (
       guild_id   TEXT,
@@ -102,7 +119,7 @@ db.transaction(() => {
     );
   `);
 
-  // 旧テーブルに guild_id が無ければ列だけ追加（既存データは 'global' として扱う）
+  // 既存の旧スキーマに列が無ければ追加（あっても無視）
   try { db.exec(`ALTER TABLE signup ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE signup_participants ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE matches ADD COLUMN guild_id TEXT`); } catch {}
