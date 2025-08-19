@@ -22,16 +22,17 @@ function usersHasGuildId() {
 db.exec('PRAGMA foreign_keys=OFF');
 db.transaction(() => {
   if (!tableExists('users')) {
-    // 新規作成（ギルド対応）
+    // 新規作成（ギルド対応 + loss_streak 追加）
     db.exec(`
       CREATE TABLE IF NOT EXISTS users (
-        guild_id   TEXT NOT NULL,
-        user_id    TEXT NOT NULL,
-        username   TEXT,
-        points     INTEGER DEFAULT 300,
-        wins       INTEGER DEFAULT 0,
-        losses     INTEGER DEFAULT 0,
-        win_streak INTEGER DEFAULT 0,
+        guild_id     TEXT NOT NULL,
+        user_id      TEXT NOT NULL,
+        username     TEXT,
+        points       INTEGER DEFAULT 300,
+        wins         INTEGER DEFAULT 0,
+        losses       INTEGER DEFAULT 0,
+        win_streak   INTEGER DEFAULT 0,
+        loss_streak  INTEGER DEFAULT 0,
         PRIMARY KEY (guild_id, user_id)
       );
     `);
@@ -44,20 +45,21 @@ db.transaction(() => {
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS users_new (
-        guild_id   TEXT NOT NULL,
-        user_id    TEXT NOT NULL,
-        username   TEXT,
-        points     INTEGER DEFAULT 300,
-        wins       INTEGER DEFAULT 0,
-        losses     INTEGER DEFAULT 0,
-        win_streak INTEGER DEFAULT 0,
+        guild_id     TEXT NOT NULL,
+        user_id      TEXT NOT NULL,
+        username     TEXT,
+        points       INTEGER DEFAULT 300,
+        wins         INTEGER DEFAULT 0,
+        losses       INTEGER DEFAULT 0,
+        win_streak   INTEGER DEFAULT 0,
+        loss_streak  INTEGER DEFAULT 0,
         PRIMARY KEY (guild_id, user_id)
       );
     `);
 
     const ins = db.prepare(`
-      INSERT OR IGNORE INTO users_new (guild_id, user_id, username, points, wins, losses, win_streak)
-      VALUES (@guild_id, @user_id, @username, COALESCE(@points,300), COALESCE(@wins,0), COALESCE(@losses,0), COALESCE(@win_streak,0))
+      INSERT OR IGNORE INTO users_new (guild_id, user_id, username, points, wins, losses, win_streak, loss_streak)
+      VALUES (@guild_id, @user_id, @username, COALESCE(@points,300), COALESCE(@wins,0), COALESCE(@losses,0), COALESCE(@win_streak,0), COALESCE(@loss_streak,0))
     `);
 
     for (const r of oldRows) {
@@ -68,7 +70,8 @@ db.transaction(() => {
         points: r.points,
         wins: r.wins,
         losses: r.losses,
-        win_streak: r.win_streak
+        win_streak: r.win_streak,
+        loss_streak: r.loss_streak ?? 0,
       });
     }
 
@@ -124,6 +127,9 @@ db.transaction(() => {
   try { db.exec(`ALTER TABLE signup_participants ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE matches ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE last_team_signature ADD COLUMN guild_id TEXT`); } catch {}
+  // streak 列の後方互換
+  try { db.exec(`ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE users ADD COLUMN loss_streak INTEGER DEFAULT 0`); } catch {}
 })();
 db.exec('PRAGMA foreign_keys=ON');
 
@@ -146,9 +152,13 @@ UPDATE users
 SET wins = wins + ?, losses = losses + ?, points = points + ?
 WHERE guild_id=? AND user_id=?
 `);
-export const getStreak    = db.prepare(`SELECT win_streak FROM users WHERE guild_id=? AND user_id=?`);
-export const incStreak    = db.prepare(`UPDATE users SET win_streak = CASE WHEN win_streak < ? THEN win_streak + 1 ELSE win_streak END WHERE guild_id=? AND user_id=?`);
-export const resetStreak  = db.prepare(`UPDATE users SET win_streak = 0 WHERE guild_id=? AND user_id=?`);
+export const getStreak       = db.prepare(`SELECT win_streak  FROM users WHERE guild_id=? AND user_id=?`);
+export const incStreak       = db.prepare(`UPDATE users SET win_streak  = CASE WHEN win_streak  < ? THEN win_streak  + 1 ELSE win_streak  END WHERE guild_id=? AND user_id=?`);
+export const resetStreak     = db.prepare(`UPDATE users SET win_streak  = 0 WHERE guild_id=? AND user_id=?`);
+export const getLossStreak   = db.prepare(`SELECT loss_streak FROM users WHERE guild_id=? AND user_id=?`);
+export const incLossStreak   = db.prepare(`UPDATE users SET loss_streak = CASE WHEN loss_streak < ? THEN loss_streak + 1 ELSE loss_streak END WHERE guild_id=? AND user_id=?`);
+export const resetLossStreak = db.prepare(`UPDATE users SET loss_streak = 0 WHERE guild_id=? AND user_id=?`);
+
 export const topRanks     = db.prepare(`
 SELECT
   user_id, username, points, wins, losses, win_streak,
@@ -200,19 +210,22 @@ export const setPointsConfig        = db.prepare(`
 INSERT INTO config (key, value) VALUES (?, ?)
 ON CONFLICT(key) DO UPDATE SET value=excluded.value
 `);
-export function updatePointsConfig({ win, loss, streak_cap }) {
-  if (win         !== undefined && win         !== null) setPointsConfig.run('win',         String(win));
-  if (loss        !== undefined && loss        !== null) setPointsConfig.run('loss',        String(loss));
-  if (streak_cap  !== undefined && streak_cap  !== null) setPointsConfig.run('streak_cap',  String(streak_cap));
+export function updatePointsConfig({ win, loss, streak_cap, loss_streak_cap }) {
+  if (win              !== undefined && win              !== null) setPointsConfig.run('win',              String(win));
+  if (loss             !== undefined && loss             !== null) setPointsConfig.run('loss',             String(loss));
+  if (streak_cap       !== undefined && streak_cap       !== null) setPointsConfig.run('streak_cap',       String(streak_cap));
+  if (loss_streak_cap  !== undefined && loss_streak_cap  !== null) setPointsConfig.run('loss_streak_cap',  String(loss_streak_cap));
 }
 export function getPointsConfig() {
-  const w = db.prepare(`SELECT value FROM config WHERE key='win'`).get();
-  const l = db.prepare(`SELECT value FROM config WHERE key='loss'`).get();
-  const s = db.prepare(`SELECT value FROM config WHERE key='streak_cap'`).get();
+  const w  = db.prepare(`SELECT value FROM config WHERE key='win'`).get();
+  const l  = db.prepare(`SELECT value FROM config WHERE key='loss'`).get();
+  const s  = db.prepare(`SELECT value FROM config WHERE key='streak_cap'`).get();
+  const ls = db.prepare(`SELECT value FROM config WHERE key='loss_streak_cap'`).get();
   return {
-    win:        w ? Number(w.value) : 3,
-    loss:       l ? Number(l.value) : -2,
-    streak_cap: s ? Number(s.value) : 3,
+    win:             w  ? Number(w.value)  : 3,
+    loss:            l  ? Number(l.value)  : -2,
+    streak_cap:      s  ? Number(s.value)  : 3,
+    loss_streak_cap: ls ? Number(ls.value) : (s ? Number(s.value) : 3),
   };
 }
 

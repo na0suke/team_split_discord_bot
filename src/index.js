@@ -1,3 +1,4 @@
+// src/index.js
 import 'dotenv/config';
 import {
   Client,
@@ -16,6 +17,9 @@ import {
   getStreak,
   incStreak,
   resetStreak,
+  getLossStreak,
+  incLossStreak,
+  resetLossStreak,
   topRanks,
   createSignup,
   latestSignupMessageId,
@@ -39,7 +43,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-// 追加: カンマ区切りで複数ギルドID対応（GUILD_IDS が無ければ GUILD_ID を使う）
+// 複数ギルド登録用（GUILD_IDS が無ければ GUILD_ID を使う）
 const GUILD_IDS = (process.env.GUILD_IDS ?? process.env.GUILD_ID ?? '')
   .split(',')
   .map(s => s.trim())
@@ -61,28 +65,14 @@ const client = new Client({
 
 // ====== Slash Commands ======
 const commands = [
-  {
-    name: 'start_signup',
-    description: '参加受付を開始（例: `/start_signup`）',
-  },
-  {
-    name: 'show_participants',
-    description: '現在の参加者を表示（例: `/show_participants`）',
-  },
-  {
-    name: 'reset_participants',
-    description: '参加者リセット（例: `/reset_participants`）',
-  },
-  {
-    name: 'leave',
-    description: '自分を参加リストから外す（例: `/leave`）',
-  },
+  { name: 'start_signup', description: '参加受付を開始（例: `/start_signup`）' },
+  { name: 'show_participants', description: '現在の参加者を表示（例: `/show_participants`）' },
+  { name: 'reset_participants', description: '参加者リセット（例: `/reset_participants`）' },
+  { name: 'leave', description: '自分を参加リストから外す（例: `/leave`）' },
   {
     name: 'kick_from_lol',
     description: '他人を参加リストから外す（誰でも可）（例: `/kick_from_lol @user`）',
-    options: [
-      { name: 'user', description: '対象ユーザー', type: 6, required: true },
-    ],
+    options: [{ name: 'user', description: '対象ユーザー', type: 6, required: true }],
   },
   {
     name: 'set_strength',
@@ -92,14 +82,8 @@ const commands = [
       { name: 'points', description: 'ポイント値', type: 4, required: true },
     ],
   },
-  {
-    name: 'team',
-    description: '強さを考慮してチーム分け（直前と似た構成を回避）（例: `/team`）',
-  },
-  {
-    name: 'team_simple',
-    description: '強さ無視でランダム2分割（例: `/team_simple`）',
-  },
+  { name: 'team', description: '強さを考慮してチーム分け（直前と似た構成を回避）（例: `/team`）' },
+  { name: 'team_simple', description: '強さ無視でランダム2分割（例: `/team_simple`）' },
   {
     name: 'result',
     description: '勝敗を登録（例: `/result winner:A`、`/result winner:B`）',
@@ -109,17 +93,9 @@ const commands = [
         description: '勝利チーム (A or B)',
         type: 3,
         required: true,
-        choices: [
-          { name: 'A', value: 'A' },
-          { name: 'B', value: 'B' },
-        ],
+        choices: [{ name: 'A', value: 'A' }, { name: 'B', value: 'B' }],
       },
-      {
-        name: 'match_id',
-        description: '対象マッチID（未指定なら最新）',
-        type: 4,
-        required: false,
-      },
+      { name: 'match_id', description: '対象マッチID（未指定なら最新）', type: 4, required: false },
     ],
   },
   {
@@ -131,36 +107,23 @@ const commands = [
         description: '勝利チーム (A or B)',
         type: 3,
         required: true,
-        choices: [
-          { name: 'A', value: 'A' },
-          { name: 'B', value: 'B' },
-        ],
+        choices: [{ name: 'A', value: 'A' }, { name: 'B', value: 'B' }],
       },
-      {
-        name: 'match_id',
-        description: '対象マッチID（未指定なら最新）',
-        type: 4,
-        required: false,
-      },
+      { name: 'match_id', description: '対象マッチID（未指定なら最新）', type: 4, required: false },
     ],
   },
   {
     name: 'set_points',
-    description: '勝敗ポイント/連勝上限を設定（例: `/set_points win:5 loss:-3 streak_cap:2`）',
+    description: '勝敗ポイント/連勝上限/連敗上限を設定（例: `/set_points win:5 loss:-3 streak_cap:2 loss_streak_cap:2`）',
     options: [
       { name: 'win', description: '勝利ポイント（例: 3）', type: 4, required: false },
       { name: 'loss', description: '敗北ポイント（例: -2）', type: 4, required: false },
       { name: 'streak_cap', description: '連勝ボーナス上限（例: 3）', type: 4, required: false },
+      { name: 'loss_streak_cap', description: '連敗ペナルティ上限（例: 3）', type: 4, required: false },
     ],
   },
-  {
-    name: 'show_points',
-    description: '現在の勝敗ポイント設定を表示（例: `/show_points`）',
-  },
-  {
-    name: 'rank',
-    description: 'ランキング表示（例: `/rank`）',
-  },
+  { name: 'show_points', description: '現在のポイント設定を表示（例: `/show_points`）' },
+  { name: 'rank', description: 'ランキング表示（例: `/rank`）' },
   {
     name: 'join_name',
     description: 'ユーザー名だけで参加者に追加（例: `/join_name name:たろう points:320`）',
@@ -171,19 +134,18 @@ const commands = [
   },
 ];
 
+// ========= コマンド登録 =========
+// 単一ギルド or グローバル（既存互換）
 if (process.argv[2] === 'register' || process.argv[2] === 'register-global') {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   (async () => {
-    // 1) まず appId を確定（CLIENT_ID が無ければトークンでログインして取得）
     let appId = CLIENT_ID;
     if (!appId) {
       const tmp = new Client({ intents: [] });
       await tmp.login(TOKEN);
-      appId = tmp.user.id; // Bot user id = application id
+      appId = tmp.user.id;
       await tmp.destroy();
     }
-
-    // 2) どちらで登録するかを明示的に分岐（どちらか一方だけ実行）
     if (process.argv[2] === 'register-global') {
       await rest.put(Routes.applicationCommands(appId), { body: commands });
       console.log('Global commands registered.');
@@ -192,40 +154,28 @@ if (process.argv[2] === 'register' || process.argv[2] === 'register-global') {
       await rest.put(Routes.applicationGuildCommands(appId, GUILD_ID), { body: commands });
       console.log('Guild commands registered.');
     }
-
     process.exit(0);
-  })().catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+  })().catch((e) => { console.error(e); process.exit(1); });
 }
 
-// ★新規追加: 複数ギルドへまとめてギルド登録
+// 複数ギルド一括登録（追加機能）
 if (process.argv[2] === 'guild-register') {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   (async () => {
-    // appId を確定（CLIENT_ID 未設定なら一時ログインで取得）
     let appId = CLIENT_ID;
     if (!appId) {
       const tmp = new Client({ intents: [] });
       await tmp.login(TOKEN);
-      appId = tmp.user.id; // Bot user id = application id
+      appId = tmp.user.id;
       await tmp.destroy();
     }
-
-    if (!GUILD_IDS.length) {
-      throw new Error('GUILD_IDS または GUILD_ID を環境変数に設定してください（カンマ区切り可）');
-    }
-
+    if (!GUILD_IDS.length) throw new Error('GUILD_IDS または GUILD_ID を設定してください（カンマ区切り可）');
     for (const gid of GUILD_IDS) {
       await rest.put(Routes.applicationGuildCommands(appId, gid), { body: commands });
       console.log(`Guild commands registered for ${gid}`);
     }
     process.exit(0);
-  })().catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+  })().catch((e) => { console.error(e); process.exit(1); });
 }
 
 client.once('ready', () => {
@@ -233,12 +183,12 @@ client.once('ready', () => {
 });
 
 // ===== helpers =====
- function ensureUserRow(gid, user) {
-   upsertUser.run({
-     guild_id: gid,
-     user_id: user.id,
-     username: user.username || user.displayName || `user_${user.id}`
-   });
+function ensureUserRow(gid, user) {
+  upsertUser.run({
+    guild_id: gid,
+    user_id: user.id,
+    username: user.username || user.displayName || `user_${user.id}`
+  });
 }
 
 function formatResultLine(before, delta1, delta2, after, label = '') {
@@ -247,6 +197,40 @@ function formatResultLine(before, delta1, delta2, after, label = '') {
   const base = `${before} ${d1}${d2} => ${after}`;
   return label ? `${label}: ${base}` : base;
 }
+
+// === 応答安定化ヘルパー ===
+// 期限内なら deferReply、期限切れ(10062)なら false を返す
+async function tryDefer(interaction, opts) {
+  if (interaction.deferred || interaction.replied) return true;
+  try {
+    await interaction.deferReply(opts);
+    return true;
+  } catch (e) {
+    if (e?.code === 10062) return false;
+    throw e;
+  }
+}
+
+// 最終返信：defer 済みなら editReply、未deferなら reply、どちらも失敗ならチャンネル送信
+async function sendFinal(interaction, payload, acked) {
+  try {
+    const already = acked ?? (interaction.deferred || interaction.replied);
+    if (already) return await interaction.editReply(payload);
+    return await interaction.reply(payload);
+  } catch (e) {
+    if (e?.code === 10062 || e?.code === 40060) {
+      try {
+        const channel = interaction.channel ?? (interaction.channelId ? await interaction.client.channels.fetch(interaction.channelId) : null);
+        if (channel) {
+          const text = typeof payload === 'string' ? payload : (payload?.content ?? '（応答に失敗しました）');
+          return await channel.send(text);
+        }
+      } catch (_) {}
+    }
+    throw e;
+  }
+}
+
 // ===== Slash command handling =====
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
@@ -254,12 +238,13 @@ client.on('interactionCreate', async (interaction) => {
   const name = interaction.commandName;
 
   try {
+    // --- /start_signup ---
     if (name === 'start_signup') {
-      await interaction.deferReply(); // ★ 先に応答を確保
+      const acked = await tryDefer(interaction); // 先にACK
       const embed = new EmbedBuilder()
         .setTitle('参加受付中')
         .setDescription('✋ 参加 / ✅ バランス分け / 🎲 ランダム分け（強さ無視）');
-      const msg = await interaction.editReply({ embeds: [embed], fetchReply: true }); // ★ 最後は editReply
+      const msg = await sendFinal(interaction, { embeds: [embed], fetchReply: true }, acked);
       try {
         await msg.react(JOIN_EMOJI);
         await msg.react(OK_EMOJI);
@@ -267,10 +252,11 @@ client.on('interactionCreate', async (interaction) => {
       } catch (e) {
         console.error('failed to add reactions', e);
       }
-      createSignup.run(interaction.guildId, msg.id, msg.channelId, interaction.user.id, Date.now());
+      createSignup.run(gid, msg.id, msg.channelId, interaction.user.id, Date.now());
       return;
     }
 
+    // --- 参加者表示/操作 ---
     if (name === 'show_participants') {
       const row = latestSignupMessageId.get(gid);
       if (!row) return interaction.reply('現在受付中の募集はありません。');
@@ -302,6 +288,7 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply(`${user.username} を参加リストから外しました。`);
     }
 
+    // --- 強さ設定 ---
     if (name === 'set_strength') {
       const user = interaction.options.getUser('user', true);
       const points = interaction.options.getInteger('points', true);
@@ -310,15 +297,14 @@ client.on('interactionCreate', async (interaction) => {
       return interaction.reply(`${user.username} の強さを ${points} に設定しました。`);
     }
 
+    // --- チーム分け（/team /team_simple） ---
     if (name === 'team' || name === 'team_simple') {
-      // 先に応答を確保（Unknown interaction対策）
-      await interaction.deferReply();
+      const acked = await tryDefer(interaction);
       const row = latestSignupMessageId.get(gid);
-      if (!row) return interaction.editReply('現在受付中の募集はありません。');
+      if (!row) return sendFinal(interaction, '現在受付中の募集はありません。', acked);
       const raw = listParticipants.all(gid, row.message_id);
-      if (raw.length < 2) return interaction.editReply('参加者が足りません。');
+      if (raw.length < 2) return sendFinal(interaction, '参加者が足りません。', acked);
 
-      // users テーブルの points/username を付与
       const enriched = raw.map((p) => {
         const u = getUser.get(gid, p.user_id);
         return {
@@ -340,6 +326,11 @@ client.on('interactionCreate', async (interaction) => {
         signature = null; // ランダムは署名は更新しない
       }
 
+      const sumA = teamA.reduce((s, u) => s + (u.points ?? 300), 0);
+      const sumB = teamB.reduce((s, u) => s + (u.points ?? 300), 0);
+      const titleA = name === 'team' ? `Team A (${teamA.length})｜⭐合計 ${sumA}` : `Team A (${teamA.length})`;
+      const titleB = name === 'team' ? `Team B (${teamB.length})｜⭐合計 ${sumB}` : `Team B (${teamB.length})`;
+
       const matchId = createMatch.run(
         gid,
         row.message_id,
@@ -351,59 +342,67 @@ client.on('interactionCreate', async (interaction) => {
       const embed = new EmbedBuilder()
         .setTitle(`マッチ ID: ${matchId}`)
         .addFields(
-        { name: titleA, value: formatTeamLines(teamA), inline: true },
-        { name: '\u200B', value: '\u200B', inline: true }, // ← 追加
-        { name: titleB, value: formatTeamLines(teamB), inline: true },
+          { name: titleA, value: formatTeamLines(teamA), inline: true },
+          { name: '\u200B', value: '\u200B', inline: true }, // 中央スペーサ
+          { name: titleB, value: formatTeamLines(teamB), inline: true },
         );
-      return interaction.editReply({ embeds: [embed] });
+      return sendFinal(interaction, { embeds: [embed] }, acked);
     }
 
+    // --- 勝敗登録（/result /win） ---
     if (name === 'result' || name === 'win') {
+      const acked = await tryDefer(interaction);
+
       const winner = name === 'result'
         ? interaction.options.getString('winner', true)
         : interaction.options.getString('team', true);
       const matchIdOpt = interaction.options.getInteger('match_id');
-      const match = matchIdOpt
-        ? getMatchById.get(matchIdOpt, gid)
-        : getLatestMatch.get(gid);
-      if (!match) return interaction.reply('対象マッチが見つかりません。');
+      const match = matchIdOpt ? getMatchById.get(matchIdOpt, gid) : getLatestMatch.get(gid);
+      if (!match) return sendFinal(interaction, '対象マッチが見つかりません。', acked);
 
       const cfg = getPointsConfig();
       const teamA = JSON.parse(match.team_a);
       const teamB = JSON.parse(match.team_b);
-
       const winners = winner === 'A' ? teamA : teamB;
       const losers  = winner === 'A' ? teamB : teamA;
 
       const linesA = [];
       const linesB = [];
 
-      // 勝者
+      // 勝者：2連勝目から +1、連敗はリセット
       for (const uid of winners) {
         const beforeRow = getUser.get(gid, uid);
         const before = beforeRow?.points ?? 300;
         const streakBefore = (getStreak.get(gid, uid)?.win_streak) ?? 0;
-        // 2連勝目から 1 を付ける（初勝利は +0）
-        const bonus = Math.min(streakBefore, cfg.streak_cap);
+        const bonus = Math.min(streakBefore, cfg.streak_cap); // 初勝利は +0
         const delta = cfg.win + bonus;
 
         addWinLoss.run(1, 0, delta, gid, uid);
         incStreak.run(cfg.streak_cap, gid, uid);
+        resetLossStreak.run(gid, uid); // 勝利で連敗リセット
 
         const after = before + delta;
         const label = beforeRow?.username || `<@${uid}>`;
         linesA.push(formatResultLine(before, cfg.win, bonus, after, label));
       }
 
-      // 敗者
+      // 敗者：2連敗目から -1（上限あり）。勝利ストリークリセット
       for (const uid of losers) {
         const beforeRow = getUser.get(gid, uid);
         const before = beforeRow?.points ?? 300;
-        addWinLoss.run(0, 1, cfg.loss, gid, uid);
-        resetStreak.run(gid, uid);
-        const after = before + cfg.loss;
+
+        const lsBefore = (getLossStreak.get(gid, uid)?.loss_streak) ?? 0;
+        const lcap = cfg.loss_streak_cap ?? cfg.streak_cap;
+        const penalty = Math.min(lsBefore, lcap); // 初敗北は 0
+        const delta = cfg.loss - penalty;        // 例: -2 -1 = -3
+
+        addWinLoss.run(0, 1, delta, gid, uid);
+        incLossStreak.run(lcap, gid, uid);
+        resetStreak.run(gid, uid); // 敗北で連勝リセット
+
+        const after = before + delta;
         const label = beforeRow?.username || `<@${uid}>`;
-        linesB.push(formatResultLine(before, cfg.loss, 0, after, label));
+        linesB.push(formatResultLine(before, cfg.loss, -penalty, after, label));
       }
 
       setMatchWinner.run(winner, match.id, gid);
@@ -418,26 +417,34 @@ client.on('interactionCreate', async (interaction) => {
         ...(linesB.length ? linesB : ['- 変更なし']),
       ].join('\n');
 
-      return interaction.reply(text);
+      return sendFinal(interaction, text, acked);
     }
 
+    // --- ポイント設定/表示・ランク ---
     if (name === 'set_points') {
       const needManage = interaction.member?.permissions?.has?.(PermissionsBitField.Flags.ManageGuild);
-      // 必要に応じて権限チェックを有効化
+      // 必要なら権限制御を有効化:
       // if (!needManage) return interaction.reply('このコマンドは Manage Server 権限者のみ実行できます。');
 
-      const win = interaction.options.getInteger('win');
+      const win  = interaction.options.getInteger('win');
       const loss = interaction.options.getInteger('loss');
       const cap  = interaction.options.getInteger('streak_cap');
+      const lcap = interaction.options.getInteger('loss_streak_cap');
 
-      updatePointsConfig({ win, loss, streak_cap: cap });
+      updatePointsConfig({ win, loss, streak_cap: cap, loss_streak_cap: lcap });
       const cfg = getPointsConfig();
-      return interaction.reply(`ポイント設定を更新しました: win=${cfg.win}, loss=${cfg.loss}, streak_cap=${cfg.streak_cap}`);
+      return interaction.reply(
+        `ポイント設定を更新しました: win=${cfg.win}, loss=${cfg.loss}, ` +
+        `streak_cap=${cfg.streak_cap}, loss_streak_cap=${cfg.loss_streak_cap}`
+      );
     }
 
     if (name === 'show_points') {
       const cfg = getPointsConfig();
-      return interaction.reply(`現在のポイント設定: win=${cfg.win}, loss=${cfg.loss}, streak_cap=${cfg.streak_cap}`);
+      return interaction.reply(
+        `現在のポイント設定: win=${cfg.win}, loss=${cfg.loss}, ` +
+        `streak_cap=${cfg.streak_cap}, loss_streak_cap=${cfg.loss_streak_cap}`
+      );
     }
 
     if (name === 'rank') {
@@ -449,40 +456,37 @@ client.on('interactionCreate', async (interaction) => {
       });
       return interaction.reply(['ランキング:', ...lines].join('\n'));
     }
+
+    // --- /join_name ---
+    if (name === 'join_name') {
+      const row = latestSignupMessageId.get(gid);
+      if (!row) return interaction.reply('現在受付中の募集はありません。');
+
+      const nameArg = interaction.options.getString('name', true).trim();
+      const pointsArg = interaction.options.getInteger('points'); // null 可
+
+      // 衝突しない擬似IDを決定
+      const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
+      const baseId = `name:${nameArg}`;
+      let uid = baseId;
+      let c = 2;
+      while (existing.includes(uid)) {
+        uid = `${baseId}#${c++}`;
+      }
+
+      // users にも登録（points 指定があれば上書き）
+      upsertUser.run({ guild_id: gid, user_id: uid, username: nameArg });
+      if (pointsArg !== null && pointsArg !== undefined) {
+        setStrength.run(gid, uid, nameArg, pointsArg);
+      }
+
+      // 参加者表へ追加（返信はIDを見せない）
+      addParticipant.run(gid, row.message_id, uid, nameArg);
+      return interaction.reply(`**${nameArg}** を参加者に追加しました${pointsArg!=null?`（⭐${pointsArg}）`:''}。`);
+    }
   } catch (e) {
     console.error(e);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply('内部エラーが発生しました。ログを確認してください。');
-    } else {
-      await interaction.reply('内部エラーが発生しました。ログを確認してください。');
-    }
-  }
-
-  if (name === 'join_name') {
-    const row = latestSignupMessageId.get(gid);
-    if (!row) return interaction.reply('現在受付中の募集はありません。');
-
-    const nameArg = interaction.options.getString('name', true).trim();
-    const pointsArg = interaction.options.getInteger('points'); // null 可
-
-    // 既存参加者の user_id を見て衝突回避つきの擬似IDを決定
-    const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
-    const baseId = `name:${nameArg}`;
-    let uid = baseId;
-    let c = 2;
-    while (existing.includes(uid)) {
-      uid = `${baseId}#${c}`;
-    }
-
-    // users にも登録（points 指定があれば上書き）
-    upsertUser.run({ guild_id: gid, user_id: uid, username: nameArg });
-    if (pointsArg !== null && pointsArg !== undefined) {
-      setStrength.run(gid, uid, nameArg, pointsArg);
-    }
-
-    // 参加者表へ追加
-    addParticipant.run(gid, row.message_id, uid, nameArg);
-    return interaction.reply(`**${nameArg}** を参加者に追加しました${pointsArg!=null?`（⭐${pointsArg}）`:''}。`);
+    await sendFinal(interaction, '内部エラーが発生しました。ログを確認してください。');
   }
 });
 
@@ -531,14 +535,13 @@ client.on('messageReactionAdd', async (reaction, user) => {
     } else if (emoji === DICE_EMOJI) {
       const rand = splitRandom(enriched);
       teamA = rand.teamA; teamB = rand.teamB;
-      // ランダムは last_signature を更新しない（必要ならここでしてもOK）
+      // ランダムは署名は更新しない
     }
 
     const sumA = teamA.reduce((s, u) => s + (u.points ?? 300), 0);
-     const sumB = teamB.reduce((s, u) => s   (u.points ?? 300), 0);
-     const titleA = emoji === OK_EMOJI ? `Team A (${teamA.length})｜⭐合計 ${sumA}` : `Team A (${teamA.length})`;
-     const titleB = emoji === OK_EMOJI ? `Team B (${teamB.length})｜⭐合計 ${sumB}` : `Team B (${teamB.length})`;
-
+    const sumB = teamB.reduce((s, u) => s + (u.points ?? 300), 0);
+    const titleA = emoji === OK_EMOJI ? `Team A (${teamA.length})｜⭐合計 ${sumA}` : `Team A (${teamA.length})`;
+    const titleB = emoji === OK_EMOJI ? `Team B (${teamB.length})｜⭐合計 ${sumB}` : `Team B (${teamB.length})`;
 
     const matchId = createMatch.run(
       gid,
@@ -551,9 +554,9 @@ client.on('messageReactionAdd', async (reaction, user) => {
     const embed = new EmbedBuilder()
       .setTitle(`マッチ ID: ${matchId}`)
       .addFields(
-      { name: titleA, value: formatTeamLines(teamA), inline: true },
-      { name: '\u200B', value: '\u200B', inline: true }, 
-      { name: titleB, value: formatTeamLines(teamB), inline: true },
+        { name: titleA, value: formatTeamLines(teamA), inline: true },
+        { name: '\u200B', value: '\u200B', inline: true },
+        { name: titleB, value: formatTeamLines(teamB), inline: true },
       );
 
     await message.channel.send({ embeds: [embed] });
