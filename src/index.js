@@ -121,7 +121,10 @@ async function registerCommands() {
   })());
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   // ギルドコマンド（即反映）。必要なら Routes.applicationCommands(appId) にしてグローバル化可
-  await rest.put(Routes.applicationGuildCommands(appId, GUILD_ID), { body: commands });
+  await rest.put(
+  Routes.applicationCommands(appId),
+  { body: commands }
+  );
 }
 
 client.once(Events.ClientReady, () => {
