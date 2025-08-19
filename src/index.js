@@ -255,13 +255,18 @@ client.on('interactionCreate', async (interaction) => {
 
   try {
     if (name === 'start_signup') {
+      await interaction.deferReply(); // ★ 先に応答を確保
       const embed = new EmbedBuilder()
         .setTitle('参加受付中')
         .setDescription('✋ 参加 / ✅ バランス分け / 🎲 ランダム分け（強さ無視）');
-      const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
-      await msg.react(JOIN_EMOJI);
-      await msg.react(OK_EMOJI);
-      await msg.react(DICE_EMOJI);
+      const msg = await interaction.editReply({ embeds: [embed], fetchReply: true }); // ★ 最後は editReply
+      try {
+        await msg.react(JOIN_EMOJI);
+        await msg.react(OK_EMOJI);
+        await msg.react(DICE_EMOJI);
+      } catch (e) {
+        console.error('failed to add reactions', e);
+      }
       createSignup.run(interaction.guildId, msg.id, msg.channelId, interaction.user.id, Date.now());
       return;
     }
