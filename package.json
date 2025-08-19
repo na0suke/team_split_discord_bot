@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node index.js",
     "register": "node index.js register",
-    "register:global": "node src/index.js register-global"
+    "register:global": "node src/index.js register-global",
+    "register:guilds": "node src/index.js guild-register"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",
