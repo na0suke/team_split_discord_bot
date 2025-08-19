@@ -4,36 +4,35 @@ import {
   GatewayIntentBits,
   Partials,
   EmbedBuilder,
+  PermissionsBitField,
 } from 'discord.js';
 import { REST, Routes } from '@discordjs/rest';
 import {
-  createSignup,
-  getSignup,
-  addParticipant,
-  getParticipants,
-  resetParticipants,
-  ensureUser,
+  upsertUser,
+  getUser,
   setStrength,
   addWinLoss,
-  setPointsConfig,
-  getPointsConfig,
-  getRankings,
+  getStreak,
+  incStreak,
+  resetStreak,
+  topRanks,
+  createSignup,
+  latestSignupMessageId,
+  getSignup,
+  addParticipant,
+  removeParticipant,
+  listParticipants,
+  clearParticipantsByMessage,
   createMatch,
   getLatestMatch,
   getMatchById,
-  getUserById,
+  setMatchWinner,
+  setLastSignature,
+  getLastSignature,
+  updatePointsConfig,
+  getPointsConfig,
 } from './db.js';
-import { teamBalance } from './team.js';
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent,
-  ],
-  partials: [Partials.Message, Partials.Reaction, Partials.Channel],
-});
+import { splitBalanced, splitRandom, formatTeamLines } from './team.js';
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -43,7 +42,17 @@ const JOIN_EMOJI = '✋';
 const OK_EMOJI = '✅';
 const DICE_EMOJI = '🎲';
 
-// ================= コマンド定義 =================
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+});
+
+// ====== Slash Commands ======
 const commands = [
   {
     name: 'start_signup',
@@ -65,17 +74,12 @@ const commands = [
     name: 'kick_from_lol',
     description: '他人を参加リストから外す（誰でも可）（例: `/kick_from_lol @user`）',
     options: [
-      {
-        name: 'user',
-        description: '対象ユーザー',
-        type: 6,
-        required: true,
-      },
+      { name: 'user', description: '対象ユーザー', type: 6, required: true },
     ],
   },
   {
     name: 'set_strength',
-    description: '強さを登録/再定義（例: `/set_strength @user 300`）',
+    description: 'メンバーの強さを登録/再定義（例: `/set_strength @user 350`）',
     options: [
       { name: 'user', description: '対象ユーザー', type: 6, required: true },
       { name: 'points', description: 'ポイント値', type: 4, required: true },
@@ -83,25 +87,31 @@ const commands = [
   },
   {
     name: 'team',
-    description: '強さバランスでチーム分け（例: `/team`）',
+    description: '強さを考慮してチーム分け（直前と似た構成を回避）（例: `/team`）',
   },
   {
     name: 'team_simple',
-    description: '強さ無視で単純に2分割（例: `/team_simple`）',
+    description: '強さ無視でランダム2分割（例: `/team_simple`）',
   },
   {
     name: 'result',
-    description: '勝敗登録（例: `/result winner:A`）',
+    description: '勝敗を登録（例: `/result winner:A`、`/result winner:B`）',
     options: [
       {
         name: 'winner',
-        description: '勝利チーム',
+        description: '勝利チーム (A or B)',
         type: 3,
         required: true,
         choices: [
           { name: 'A', value: 'A' },
           { name: 'B', value: 'B' },
         ],
+      },
+      {
+        name: 'match_id',
+        description: '対象マッチID（未指定なら最新）',
+        type: 4,
+        required: false,
       },
     ],
   },
@@ -111,7 +121,7 @@ const commands = [
     options: [
       {
         name: 'team',
-        description: '勝利チーム',
+        description: '勝利チーム (A or B)',
         type: 3,
         required: true,
         choices: [
@@ -129,26 +139,11 @@ const commands = [
   },
   {
     name: 'set_points',
-    description: '勝敗ポイント/連勝上限を設定（Manage Server権限者のみ）（例: `/set_points win:5 loss:-3 streak_cap:2`）',
+    description: '勝敗ポイント/連勝上限を設定（例: `/set_points win:5 loss:-3 streak_cap:2`）',
     options: [
-      {
-        name: 'win',
-        description: '勝利ポイント（例: 3）',
-        type: 4,
-        required: false,
-      },
-      {
-        name: 'loss',
-        description: '敗北ポイント（例: -2）',
-        type: 4,
-        required: false,
-      },
-      {
-        name: 'streak_cap',
-        description: '連勝ボーナス上限（例: 3）',
-        type: 4,
-        required: false,
-      },
+      { name: 'win', description: '勝利ポイント（例: 3）', type: 4, required: false },
+      { name: 'loss', description: '敗北ポイント（例: -2）', type: 4, required: false },
+      { name: 'streak_cap', description: '連勝ボーナス上限（例: 3）', type: 4, required: false },
     ],
   },
   {
@@ -161,270 +156,310 @@ const commands = [
   },
 ];
 
-// ================= コマンド登録 =================
 if (process.argv[2] === 'register') {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   (async () => {
-    try {
-      console.log('Registering slash commands...');
-      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
-        body: commands,
-      });
-      console.log('Guild commands registered.');
-      process.exit(0);
-    } catch (err) {
-      console.error(err);
-      process.exit(1);
-    }
-  })();
+    await rest.put(
+      GUILD_ID
+        ? Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID)
+        : Routes.applicationCommands(CLIENT_ID),
+      { body: commands }
+    );
+    console.log('Slash commands registered.');
+    process.exit(0);
+  })().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
 }
 
-// ================== 起動処理 ==================
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// ================== スラッシュコマンド処理 ==================
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isCommand()) return;
-
-  const { commandName } = interaction;
-
-  // 参加受付開始
-  if (commandName === 'start_signup') {
-    const msg = await interaction.reply({
-      content: '参加受付を開始します！参加する人は ✋ を押してください。チーム分けは ✅、ランダム分けは 🎲',
-      fetchReply: true,
-    });
-    await msg.react(JOIN_EMOJI);
-    await msg.react(OK_EMOJI);
-    await msg.react(DICE_EMOJI);
-    await createSignup(msg.id);
-  }
-
-  // 参加者一覧表示
-  else if (commandName === 'show_participants') {
-    const participants = await getParticipants();
-    if (!participants.length) {
-      await interaction.reply('現在参加者はいません。');
-    } else {
-      const names = participants.map((p) => `<@${p.user_id}> (${p.strength})`);
-      await interaction.reply(`現在の参加者:\n${names.join('\n')}`);
-    }
-  }
-
-  // リセット
-  else if (commandName === 'reset_participants') {
-    await resetParticipants();
-    await interaction.reply('参加者をリセットしました。');
-  }
-
-  // 自分を抜ける
-  else if (commandName === 'leave') {
-    const userId = interaction.user.id;
-    const signup = await getSignup();
-    if (!signup) return interaction.reply('現在募集はありません。');
-
-    const participants = await getParticipants();
-    const exists = participants.find((p) => p.user_id === userId);
-    if (!exists) {
-      await interaction.reply('あなたは参加していません。');
-    } else {
-      await resetParticipants();
-      for (let p of participants) {
-        if (p.user_id !== userId) {
-          await addParticipant(signup.id, p.user_id);
-        }
-      }
-      await interaction.reply('あなたをリストから外しました。');
-    }
-  }
-
-  // 他人をキック
-  else if (commandName === 'kick_from_lol') {
-    const user = interaction.options.getUser('user');
-    const signup = await getSignup();
-    if (!signup) return interaction.reply('現在募集はありません。');
-    const participants = await getParticipants();
-    const remains = participants.filter((p) => p.user_id !== user.id);
-    await resetParticipants();
-    for (let p of remains) {
-      await addParticipant(signup.id, p.user_id);
-    }
-    await interaction.reply(`${user.username} をリストから外しました。`);
-  }
-
-  // 強さ登録
-  else if (commandName === 'set_strength') {
-    const user = interaction.options.getUser('user');
-    const points = interaction.options.getInteger('points');
-    await setStrength(user.id, points);
-    await interaction.reply(`${user.username} の強さを ${points} に設定しました。`);
-  }
-
-  // チーム分け（バランス）
-  else if (commandName === 'team') {
-    const participants = await getParticipants();
-    if (participants.length < 2) return interaction.reply('参加者が不足しています。');
-
-    const teams = teamBalance(participants);
-    const msg = `チーム分け結果：\n\nAチーム:\n${teams.A.map((p) => `<@${p.user_id}> (${p.strength})`).join('\n')}\n\nBチーム:\n${teams.B.map((p) => `<@${p.user_id}> (${p.strength})`).join('\n')}`;
-    await interaction.reply(msg);
-
-    const matchId = await createMatch(
-      teams.A.map((p) => p.user_id),
-      teams.B.map((p) => p.user_id)
-    );
-    await interaction.followUp(`マッチID: ${matchId}`);
-  }
-
-  // チーム分け（単純ランダム）
-  else if (commandName === 'team_simple') {
-    const participants = await getParticipants();
-    if (participants.length < 2) return interaction.reply('参加者が不足しています。');
-
-    const shuffled = [...participants].sort(() => Math.random() - 0.5);
-    const mid = Math.ceil(shuffled.length / 2);
-    const teamA = shuffled.slice(0, mid);
-    const teamB = shuffled.slice(mid);
-
-    const msg = `ランダムチーム分け：\n\nAチーム:\n${teamA.map((p) => `<@${p.user_id}>`).join('\n')}\n\nBチーム:\n${teamB.map((p) => `<@${p.user_id}>`).join('\n')}`;
-    await interaction.reply(msg);
-
-    const matchId = await createMatch(
-      teamA.map((p) => p.user_id),
-      teamB.map((p) => p.user_id)
-    );
-    await interaction.followUp(`マッチID: ${matchId}`);
-  }
-
-  // 勝敗登録
-  else if (commandName === 'result') {
-    const winner = interaction.options.getString('winner');
-    const match = await getLatestMatch();
-    if (!match) return interaction.reply('まだマッチがありません。');
-
-    await processResult(winner, match, interaction);
-  }
-
-  // 簡易勝敗登録
-  else if (commandName === 'win') {
-    const team = interaction.options.getString('team');
-    const matchId = interaction.options.getInteger('match_id');
-    const match = matchId ? await getMatchById(matchId) : await getLatestMatch();
-    if (!match) return interaction.reply('対象マッチが見つかりません。');
-
-    await processResult(team, match, interaction);
-  }
-
-  // ポイント設定変更
-  else if (commandName === 'set_points') {
-    const win = interaction.options.getInteger('win');
-    const loss = interaction.options.getInteger('loss');
-    const streakCap = interaction.options.getInteger('streak_cap');
-    await setPointsConfig(win, loss, streakCap);
-    await interaction.reply(`ポイント設定を更新しました: 勝利=${win ?? '既存'} 敗北=${loss ?? '既存'} 連勝上限=${streakCap ?? '既存'}`);
-  }
-
-  // ポイント設定表示
-  else if (commandName === 'show_points') {
-    const config = await getPointsConfig();
-    await interaction.reply(`現在のポイント設定: 勝利=${config.win}, 敗北=${config.loss}, 連勝上限=${config.streak_cap}`);
-  }
-
-  // ランキング表示
-  else if (commandName === 'rank') {
-    const rankings = await getRankings();
-    if (!rankings.length) return interaction.reply('ランキングはまだありません。');
-    const lines = rankings.map((r, i) => `${i + 1}. <@${r.user_id}> - ${r.strength}pt`);
-    await interaction.reply(`ランキング:\n${lines.join('\n')}`);
-  }
-});
-
-// ================== リアクション処理 ==================
-client.on('messageReactionAdd', async (reaction, user) => {
-  if (user.bot) return;
-  if (reaction.partial) await reaction.fetch();
-
-  const signup = await getSignup();
-  if (!signup) return;
-  if (reaction.message.id !== signup.message_id) return;
-
-  // 参加表明
-  if (reaction.emoji.name === JOIN_EMOJI) {
-    await ensureUser(user.id);
-    await addParticipant(signup.id, user.id);
-    console.log(`${user.username} が参加しました`);
-  }
-
-  // ✅ チーム分け
-  if (reaction.emoji.name === OK_EMOJI) {
-    const participants = await getParticipants();
-    if (participants.length < 2) return;
-
-    const teams = teamBalance(participants);
-    const msg = `チーム分け結果：\n\nAチーム:\n${teams.A.map((p) => `<@${p.user_id}> (${p.strength})`).join('\n')}\n\nBチーム:\n${teams.B.map((p) => `<@${p.user_id}> (${p.strength})`).join('\n')}`;
-    await reaction.message.channel.send(msg);
-
-    const matchId = await createMatch(
-      teams.A.map((p) => p.user_id),
-      teams.B.map((p) => p.user_id)
-    );
-    await reaction.message.channel.send(`マッチID: ${matchId}`);
-  }
-
-  // 🎲 ランダム分け
-  if (reaction.emoji.name === DICE_EMOJI) {
-    const participants = await getParticipants();
-    if (participants.length < 2) return;
-
-    const shuffled = [...participants].sort(() => Math.random() - 0.5);
-    const mid = Math.ceil(shuffled.length / 2);
-    const teamA = shuffled.slice(0, mid);
-    const teamB = shuffled.slice(mid);
-
-    const msg = `ランダムチーム分け：\n\nAチーム:\n${teamA.map((p) => `<@${p.user_id}>`).join('\n')}\n\nBチーム:\n${teamB.map((p) => `<@${p.user_id}>`).join('\n')}`;
-    await reaction.message.channel.send(msg);
-
-    const matchId = await createMatch(
-      teamA.map((p) => p.user_id),
-      teamB.map((p) => p.user_id)
-    );
-    await reaction.message.channel.send(`マッチID: ${matchId}`);
-  }
-});
-
-// ================== 勝敗処理関数 ==================
-async function processResult(winner, match, interaction) {
-  const config = await getPointsConfig();
-  const winPts = config.win;
-  const lossPts = config.loss;
-  const streakCap = config.streak_cap;
-
-  const teamA = JSON.parse(match.team_a);
-  const teamB = JSON.parse(match.team_b);
-
-  const winners = winner === 'A' ? teamA : teamB;
-  const losers = winner === 'A' ? teamB : teamA;
-
-  let detailLines = [];
-
-  for (let uid of winners) {
-    const u = await getUserById(uid);
-    const streakBonus = Math.min(u.streak + 1, streakCap);
-    const delta = winPts + streakBonus;
-    await addWinLoss(uid, delta, true, streakCap);
-    detailLines.push(`<@${uid}>: ${u.strength} +${winPts} +${streakBonus} => ${u.strength + delta}`);
-  }
-  for (let uid of losers) {
-    const u = await getUserById(uid);
-    const delta = lossPts;
-    await addWinLoss(uid, delta, false, streakCap);
-    detailLines.push(`<@${uid}>: ${u.strength} ${lossPts} => ${u.strength + delta}`);
-  }
-
-  await interaction.reply(`結果を登録しました。勝者: チーム${winner}\n${detailLines.join('\n')}`);
+// ===== helpers =====
+function ensureUserRow(guildId, user) {
+  upsertUser.run({
+    guild_id: guildId,
+    user_id: user.id,
+    username: user.username || user.displayName || `user_${user.id}`,
+  });
 }
 
-// ================== ログイン ==================
+function formatResultLine(before, delta1, delta2, after, label = '') {
+  const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
+  const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
+  const base = `${before} ${d1}${d2} => ${after}`;
+  return label ? `${label}: ${base}` : base;
+}
+// ===== Slash command handling =====
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isCommand()) return;
+  const gid = interaction.guildId;
+  const name = interaction.commandName;
+
+  try {
+    if (name === 'start_signup') {
+      const embed = new EmbedBuilder()
+        .setTitle('参加受付中')
+        .setDescription('✋ 参加 / ✅ バランス分け / 🎲 ランダム分け（強さ無視）');
+      const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+      await msg.react(JOIN_EMOJI);
+      await msg.react(OK_EMOJI);
+      await msg.react(DICE_EMOJI);
+      createSignup.run(gid, msg.id, msg.channelId, interaction.user.id, Date.now());
+      return;
+    }
+
+    if (name === 'show_participants') {
+      const row = latestSignupMessageId.get(gid);
+      if (!row) return interaction.reply('現在受付中の募集はありません。');
+      const list = listParticipants.all(gid, row.message_id);
+      if (!list.length) return interaction.reply('現在の参加者はいません。');
+      const names = list.map((p) => `<@${p.user_id}>`).join(', ');
+      return interaction.reply(`参加者: ${names}`);
+    }
+
+    if (name === 'reset_participants') {
+      const row = latestSignupMessageId.get(gid);
+      if (!row) return interaction.reply('現在受付中の募集はありません。');
+      clearParticipantsByMessage.run(gid, row.message_id);
+      return interaction.reply('参加者をリセットしました。');
+    }
+
+    if (name === 'leave') {
+      const row = latestSignupMessageId.get(gid);
+      if (!row) return interaction.reply('現在受付中の募集はありません。');
+      removeParticipant.run(gid, row.message_id, interaction.user.id);
+      return interaction.reply('あなたを参加リストから外しました。');
+    }
+
+    if (name === 'kick_from_lol') {
+      const user = interaction.options.getUser('user', true);
+      const row = latestSignupMessageId.get(gid);
+      if (!row) return interaction.reply('現在受付中の募集はありません。');
+      removeParticipant.run(gid, row.message_id, user.id);
+      return interaction.reply(`${user.username} を参加リストから外しました。`);
+    }
+
+    if (name === 'set_strength') {
+      const user = interaction.options.getUser('user', true);
+      const points = interaction.options.getInteger('points', true);
+      ensureUserRow(gid, user);
+      setStrength.run(gid, user.id, user.username, points);
+      return interaction.reply(`${user.username} の強さを ${points} に設定しました。`);
+    }
+
+    if (name === 'team' || name === 'team_simple') {
+      const row = latestSignupMessageId.get(gid);
+      if (!row) return interaction.reply('現在受付中の募集はありません。');
+      const raw = listParticipants.all(gid, row.message_id);
+      if (raw.length < 2) return interaction.reply('参加者が足りません。');
+
+      // users テーブルの points/username を付与
+      const enriched = raw.map((p) => {
+        const u = getUser.get(gid, p.user_id);
+        return {
+          user_id: p.user_id,
+          username: u?.username || p.username || p.user_id,
+          points: u?.points ?? 300,
+        };
+      });
+
+      let teamA, teamB, signature;
+      if (name === 'team') {
+        const prev = getLastSignature.get(gid)?.signature || null;
+        const res = splitBalanced(enriched, prev);
+        teamA = res.teamA; teamB = res.teamB; signature = res.signature;
+        setLastSignature.run(gid, signature);
+      } else {
+        const rand = splitRandom(enriched);
+        teamA = rand.teamA; teamB = rand.teamB;
+        signature = null; // ランダムは署名は更新しない
+      }
+
+      const matchId = createMatch.run(
+        gid,
+        row.message_id,
+        JSON.stringify(teamA.map((u) => u.user_id)),
+        JSON.stringify(teamB.map((u) => u.user_id)),
+        Date.now()
+      ).lastInsertRowid;
+
+      const embed = new EmbedBuilder()
+        .setTitle(`マッチ ID: ${matchId}`)
+        .addFields(
+          { name: `Team A (${teamA.length})`, value: formatTeamLines(teamA), inline: true },
+          { name: `Team B (${teamB.length})`, value: formatTeamLines(teamB), inline: true },
+        );
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === 'result' || name === 'win') {
+      const winner = name === 'result'
+        ? interaction.options.getString('winner', true)
+        : interaction.options.getString('team', true);
+      const matchIdOpt = interaction.options.getInteger('match_id');
+      const match = matchIdOpt
+        ? getMatchById.get(matchIdOpt, gid)
+        : getLatestMatch.get(gid);
+      if (!match) return interaction.reply('対象マッチが見つかりません。');
+
+      const cfg = getPointsConfig();
+      const teamA = JSON.parse(match.team_a);
+      const teamB = JSON.parse(match.team_b);
+
+      const winners = winner === 'A' ? teamA : teamB;
+      const losers  = winner === 'A' ? teamB : teamA;
+
+      const linesA = [];
+      const linesB = [];
+
+      // 勝者
+      for (const uid of winners) {
+        const beforeRow = getUser.get(gid, uid);
+        const before = beforeRow?.points ?? 300;
+        const streakBefore = (getStreak.get(gid, uid)?.win_streak) ?? 0;
+        const bonus = Math.min(streakBefore + 1, cfg.streak_cap);
+        const delta = cfg.win + bonus;
+
+        addWinLoss.run(1, 0, delta, gid, uid);
+        incStreak.run(cfg.streak_cap, gid, uid);
+
+        const after = before + delta;
+        const label = beforeRow?.username || `<@${uid}>`;
+        linesA.push(formatResultLine(before, cfg.win, bonus, after, label));
+      }
+
+      // 敗者
+      for (const uid of losers) {
+        const beforeRow = getUser.get(gid, uid);
+        const before = beforeRow?.points ?? 300;
+        addWinLoss.run(0, 1, cfg.loss, gid, uid);
+        resetStreak.run(gid, uid);
+        const after = before + cfg.loss;
+        const label = beforeRow?.username || `<@${uid}>`;
+        linesB.push(formatResultLine(before, cfg.loss, 0, after, label));
+      }
+
+      setMatchWinner.run(winner, match.id, gid);
+
+      const text = [
+        `勝者: Team ${winner} を登録しました。`,
+        '',
+        '# Team A',
+        ...(linesA.length ? linesA : ['- 変更なし']),
+        '',
+        '# Team B',
+        ...(linesB.length ? linesB : ['- 変更なし']),
+      ].join('\n');
+
+      return interaction.reply(text);
+    }
+
+    if (name === 'set_points') {
+      const needManage = interaction.member?.permissions?.has?.(PermissionsBitField.Flags.ManageGuild);
+      // 必要に応じて権限チェックを有効化
+      // if (!needManage) return interaction.reply('このコマンドは Manage Server 権限者のみ実行できます。');
+
+      const win = interaction.options.getInteger('win');
+      const loss = interaction.options.getInteger('loss');
+      const cap  = interaction.options.getInteger('streak_cap');
+
+      updatePointsConfig({ win, loss, streak_cap: cap });
+      const cfg = getPointsConfig();
+      return interaction.reply(`ポイント設定を更新しました: win=${cfg.win}, loss=${cfg.loss}, streak_cap=${cfg.streak_cap}`);
+    }
+
+    if (name === 'show_points') {
+      const cfg = getPointsConfig();
+      return interaction.reply(`現在のポイント設定: win=${cfg.win}, loss=${cfg.loss}, streak_cap=${cfg.streak_cap}`);
+    }
+
+    if (name === 'rank') {
+      const rows = topRanks.all(gid);
+      if (!rows.length) return interaction.reply('ランキングはまだありません。');
+      const lines = rows.map((r, i) => {
+        const rate = Math.round((r.winrate || 0) * 100);
+        return `${i + 1}. ${r.username || r.user_id} — ⭐${r.points} / ${r.wins}W-${r.losses}L / ${rate}% (WS:${r.win_streak})`;
+      });
+      return interaction.reply(['ランキング:', ...lines].join('\n'));
+    }
+  } catch (e) {
+    console.error(e);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply('内部エラーが発生しました。ログを確認してください。');
+    }
+  }
+});
+
+// ===== Reaction handling (✋ / ✅ / 🎲) =====
+client.on('messageReactionAdd', async (reaction, user) => {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+
+    const message = reaction.message;
+    const gid = message.guildId;
+    const emoji = reaction.emoji.name;
+
+    if (![JOIN_EMOJI, OK_EMOJI, DICE_EMOJI].includes(emoji)) return;
+
+    const row = latestSignupMessageId.get(gid);
+    if (!row || row.message_id !== message.id) return;
+
+    if (emoji === JOIN_EMOJI) {
+      ensureUserRow(gid, user);
+      addParticipant.run(gid, message.id, user.id, user.username);
+      return;
+    }
+
+    // 共通：参加者読み込み → ユーザー情報付与
+    const raw = listParticipants.all(gid, message.id);
+    if (raw.length < 2) {
+      await message.channel.send('参加者が足りません。');
+      return;
+    }
+    const enriched = raw.map((p) => {
+      const u = getUser.get(gid, p.user_id);
+      return {
+        user_id: p.user_id,
+        username: u?.username || p.username || p.user_id,
+        points: u?.points ?? 300,
+      };
+    });
+
+    let teamA, teamB;
+    if (emoji === OK_EMOJI) {
+      const prev = getLastSignature.get(gid)?.signature || null;
+      const res = splitBalanced(enriched, prev);
+      teamA = res.teamA; teamB = res.teamB;
+      setLastSignature.run(gid, res.signature);
+    } else if (emoji === DICE_EMOJI) {
+      const rand = splitRandom(enriched);
+      teamA = rand.teamA; teamB = rand.teamB;
+      // ランダムは last_signature を更新しない（必要ならここでしてもOK）
+    }
+
+    const matchId = createMatch.run(
+      gid,
+      message.id,
+      JSON.stringify(teamA.map((u) => u.user_id)),
+      JSON.stringify(teamB.map((u) => u.user_id)),
+      Date.now()
+    ).lastInsertRowid;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`マッチ ID: ${matchId}`)
+      .addFields(
+        { name: `Team A (${teamA.length})`, value: formatTeamLines(teamA), inline: true },
+        { name: `Team B (${teamB.length})`, value: formatTeamLines(teamB), inline: true },
+      );
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (e) {
+    console.error(e);
+  }
+});
+
 client.login(TOKEN);

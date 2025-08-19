@@ -1,66 +1,96 @@
-function signatureOfTeams(teamA, teamB) {
-  const a = [...teamA].sort().join('-');
-  const b = [...teamB].sort().join('-');
+// 強さ（points）の合計が近くなるように分割しつつ、直前と似過ぎない組合せを優先
+
+function signatureOfTeams(teamAIds, teamBIds) {
+  const a = [...teamAIds].sort().join('-');
+  const b = [...teamBIds].sort().join('-');
+  // A/Bの並び替えで同じ署名になるように正規化
   return a < b ? `${a}__${b}` : `${b}__${a}`;
 }
 
-export function splitBalanced(players, lastSig = null) {
-  const n = players.length;
-  if (n < 2) return { teamA: players, teamB: [], diff: 0, sumA: players.reduce((s,p)=>s+p.points,0), sumB: 0 };
-  const sizeA = Math.floor(n / 2);
-  const ids = players.map((_, i) => i);
+function jaccardSimilarity(currentAIds, currentBIds, prevSignature) {
+  if (!prevSignature) return 0;
+  const [pa, pb] = prevSignature.split('__');
+  const prevA = new Set(pa.split('-').filter(Boolean));
+  const prevB = new Set(pb.split('-').filter(Boolean));
+  const curA = new Set(currentAIds);
+  const curB = new Set(currentBIds);
 
-  function *combos(arr, k, start=0, acc=[]) {
-    if (acc.length === k) { yield acc; return; }
-    for (let i=start; i<arr.length; i++) {
+  const jac = (s1, s2) => {
+    const inter = [...s1].filter((x) => s2.has(x)).length;
+    const uni = new Set([...s1, ...s2]).size;
+    return uni ? inter / uni : 0;
+  };
+
+  // A↔A / A↔B / B↔A / B↔B の最大類似を採用（似すぎる構成を避ける）
+  const simAA = jac(curA, prevA);
+  const simAB = jac(curA, prevB);
+  const simBA = jac(curB, prevA);
+  const simBB = jac(curB, prevB);
+  return Math.max(simAA, simAB, simBA, simBB);
+}
+
+export function splitBalanced(players, lastSignature = null) {
+  // players: [{ user_id, username, points }]
+  const n = players.length;
+  if (n < 2) return { teamA: players, teamB: [], diff: 0, sumA: 0, sumB: 0, signature: null };
+
+  const sizeA = Math.floor(n / 2);
+  const idx = players.map((_, i) => i);
+
+  function* combos(arr, k, start = 0, acc = []) {
+    if (acc.length === k) {
+      yield acc;
+      return;
+    }
+    for (let i = start; i < arr.length; i++) {
       acc.push(arr[i]);
-      yield* combos(arr, k, i+1, acc);
+      yield* combos(arr, k, i + 1, acc);
       acc.pop();
     }
   }
 
+  const total = players.reduce((s, p) => s + p.points, 0);
   let best = null;
-  const total = players.reduce((s,p)=>s+p.points,0);
-  for (const c of combos(ids, sizeA)) {
+
+  for (const c of combos(idx, sizeA)) {
     const setA = new Set(c);
-    const teamA = players.filter((_,i)=>setA.has(i));
-    const teamB = players.filter((_,i)=>!setA.has(i));
-    const sumA = teamA.reduce((s,p)=>s+p.points,0);
+    const teamA = players.filter((_, i) => setA.has(i));
+    const teamB = players.filter((_, i) => !setA.has(i));
+    const sumA = teamA.reduce((s, p) => s + p.points, 0);
     const sumB = total - sumA;
     const diff = Math.abs(sumA - sumB);
 
+    // 直前チームとの完全一致は巨大ペナルティ、類似度(Jaccard)は係数を掛けて加点
+    const idsA = teamA.map((p) => p.user_id);
+    const idsB = teamB.map((p) => p.user_id);
+    const sigNow = signatureOfTeams(idsA, idsB);
+
     let penalty = 0;
-    if (lastSig) {
-      const sig = signatureOfTeams(teamA.map(p=>p.user_id), teamB.map(p=>p.user_id));
-      if (sig === lastSig) penalty += 100000; // 完全一致は避ける
-    }
+    if (lastSignature && sigNow === lastSignature) penalty += 100000;
+    const sim = jaccardSimilarity(idsA, idsB, lastSignature);
+    penalty += Math.floor(sim * 200); // 類似度 0.0〜1.0 に対して 0〜200 程度の重み
+
     const score = diff + penalty;
-    if (!best || score < best.score) best = { teamA, teamB, diff, sumA, sumB, score };
+
+    if (!best || score < best.score) {
+      best = { teamA, teamB, diff, sumA, sumB, score, signature: sigNow };
+    }
   }
+
   return best;
 }
 
-// ★ 強さ無視ランダム二分割
-export function splitSimple(players) {
-  const arr = [...players];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  const half = Math.floor(arr.length / 2);
-  const teamA = arr.slice(0, half);
-  const teamB = arr.slice(half);
-  return { teamA, teamB, diff: 0, sumA: 0, sumB: 0 };
+// 表示用
+export function formatTeamLines(team) {
+  return team.map((p) => `${p.username} (⭐${p.points})`).join('\n') || '-';
 }
 
-export function formatTeamsEmbedFields(teamA, teamB) {
-  const f = (team) => team.map(p => `${p.username} (⭐${p.points})`).join('\n') || '-';
-  return [
-    { name: `Team A (${teamA.length})`, value: f(teamA), inline: true },
-    { name: `Team B (${teamB.length})`, value: f(teamB), inline: true }
-  ];
-}
-
-export function signatureOfIds(a,b){
-  return signatureOfTeams(a,b);
+// ランダム2分割（強さ無視）
+export function splitRandom(players) {
+  const shuffled = [...players].sort(() => Math.random() - 0.5);
+  const half = Math.ceil(shuffled.length / 2);
+  return {
+    teamA: shuffled.slice(0, half),
+    teamB: shuffled.slice(half),
+  };
 }
