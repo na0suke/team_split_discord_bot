@@ -39,6 +39,12 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
+// 追加: カンマ区切りで複数ギルドID対応（GUILD_IDS が無ければ GUILD_ID を使う）
+const GUILD_IDS = (process.env.GUILD_IDS ?? process.env.GUILD_ID ?? '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
 const JOIN_EMOJI = '✋';
 const OK_EMOJI = '✅';
 const DICE_EMOJI = '🎲';
@@ -187,6 +193,34 @@ if (process.argv[2] === 'register' || process.argv[2] === 'register-global') {
       console.log('Guild commands registered.');
     }
 
+    process.exit(0);
+  })().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
+
+// ★新規追加: 複数ギルドへまとめてギルド登録
+if (process.argv[2] === 'guild-register') {
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
+  (async () => {
+    // appId を確定（CLIENT_ID 未設定なら一時ログインで取得）
+    let appId = CLIENT_ID;
+    if (!appId) {
+      const tmp = new Client({ intents: [] });
+      await tmp.login(TOKEN);
+      appId = tmp.user.id; // Bot user id = application id
+      await tmp.destroy();
+    }
+
+    if (!GUILD_IDS.length) {
+      throw new Error('GUILD_IDS または GUILD_ID を環境変数に設定してください（カンマ区切り可）');
+    }
+
+    for (const gid of GUILD_IDS) {
+      await rest.put(Routes.applicationGuildCommands(appId, gid), { body: commands });
+      console.log(`Guild commands registered for ${gid}`);
+    }
     process.exit(0);
   })().catch((e) => {
     console.error(e);
