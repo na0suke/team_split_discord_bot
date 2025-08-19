@@ -306,10 +306,12 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (name === 'team' || name === 'team_simple') {
+      // 先に応答を確保（Unknown interaction対策）
+      await interaction.deferReply();
       const row = latestSignupMessageId.get(gid);
-      if (!row) return interaction.reply('現在受付中の募集はありません。');
+      if (!row) return interaction.editReply('現在受付中の募集はありません。');
       const raw = listParticipants.all(gid, row.message_id);
-      if (raw.length < 2) return interaction.reply('参加者が足りません。');
+      if (raw.length < 2) return interaction.editReply('参加者が足りません。');
 
       // users テーブルの points/username を付与
       const enriched = raw.map((p) => {
@@ -348,7 +350,7 @@ client.on('interactionCreate', async (interaction) => {
         { name: '\u200B', value: '\u200B', inline: true }, // ← 追加
         { name: titleB, value: formatTeamLines(teamB), inline: true },
         );
-      return interaction.reply({ embeds: [embed] });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     if (name === 'result' || name === 'win') {
@@ -444,7 +446,9 @@ client.on('interactionCreate', async (interaction) => {
     }
   } catch (e) {
     console.error(e);
-    if (!interaction.replied && !interaction.deferred) {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply('内部エラーが発生しました。ログを確認してください。');
+    } else {
       await interaction.reply('内部エラーが発生しました。ログを確認してください。');
     }
   }
