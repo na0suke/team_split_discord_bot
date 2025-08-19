@@ -344,8 +344,9 @@ client.on('interactionCreate', async (interaction) => {
       const embed = new EmbedBuilder()
         .setTitle(`マッチ ID: ${matchId}`)
         .addFields(
-          { name: `Team A (${teamA.length})`, value: formatTeamLines(teamA), inline: true },
-          { name: `Team B (${teamB.length})`, value: formatTeamLines(teamB), inline: true },
+        { name: titleA, value: formatTeamLines(teamA), inline: true },
+        { name: '\u200B', value: '\u200B', inline: true }, // ← 追加
+        { name: titleB, value: formatTeamLines(teamB), inline: true },
         );
       return interaction.reply({ embeds: [embed] });
     }
@@ -524,6 +525,12 @@ client.on('messageReactionAdd', async (reaction, user) => {
       // ランダムは last_signature を更新しない（必要ならここでしてもOK）
     }
 
+    const sumA = teamA.reduce((s, u) => s + (u.points ?? 300), 0);
+     const sumB = teamB.reduce((s, u) => s   (u.points ?? 300), 0);
+     const titleA = emoji === OK_EMOJI ? `Team A (${teamA.length})｜⭐合計 ${sumA}` : `Team A (${teamA.length})`;
+     const titleB = emoji === OK_EMOJI ? `Team B (${teamB.length})｜⭐合計 ${sumB}` : `Team B (${teamB.length})`;
+
+
     const matchId = createMatch.run(
       gid,
       message.id,
@@ -535,8 +542,9 @@ client.on('messageReactionAdd', async (reaction, user) => {
     const embed = new EmbedBuilder()
       .setTitle(`マッチ ID: ${matchId}`)
       .addFields(
-        { name: `Team A (${teamA.length})`, value: formatTeamLines(teamA), inline: true },
-        { name: `Team B (${teamB.length})`, value: formatTeamLines(teamB), inline: true },
+      { name: titleA, value: formatTeamLines(teamA), inline: true },
+      { name: '\u200B', value: '\u200B', inline: true }, 
+      { name: titleB, value: formatTeamLines(teamB), inline: true },
       );
 
     await message.channel.send({ embeds: [embed] });
