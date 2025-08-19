@@ -5,8 +5,9 @@ import {
   Partials,
   EmbedBuilder,
   PermissionsBitField,
+  REST,
+  Routes,
 } from 'discord.js';
-import { REST, Routes } from '@discordjs/rest';
 import {
   upsertUser,
   getUser,
