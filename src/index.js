@@ -375,7 +375,8 @@ client.on('interactionCreate', async (interaction) => {
         const beforeRow = getUser.get(gid, uid);
         const before = beforeRow?.points ?? 300;
         const streakBefore = (getStreak.get(gid, uid)?.win_streak) ?? 0;
-        const bonus = Math.min(streakBefore + 1, cfg.streak_cap);
+        // 2連勝目から 1 を付ける（初勝利は +0）
+        const bonus = Math.min(streakBefore, cfg.streak_cap);
         const delta = cfg.win + bonus;
 
         addWinLoss.run(1, 0, delta, gid, uid);
