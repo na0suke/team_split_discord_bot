@@ -1,140 +1,88 @@
-# team_split_discord_bot
-discord bot team splitter
+Discord Team Split Bot
 
-# Discord LoL 5v5 Team Split Bot – Render デプロイ手順付き
+LoL のカスタム戦などで使える チーム分け＆ランキング管理 Discord Bot です。
+参加受付 → チーム分け → 勝敗登録 → ランキング表示までを一括で管理できます。
 
-このボットは Node.js + **discord.js v14** + **better-sqlite3** で動きます。Render に公開するまでの流れを最初からまとめます。
+🚀 機能一覧
+✅ 参加受付
 
----
+/start_signup
+参加受付を開始します。
 
-## 1) Discord Bot の準備
+✅ リアクションを押すと参加
 
-1. [Discord Developer Portal](https://discord.com/developers/applications) にアクセス
-2. **New Application** → 名前をつける
-3. 左メニュー **Bot** → **Add Bot**
-4. **TOKEN** をコピー（あとで `.env` に入れる）
-5. **Privileged Gateway Intents** → 「MESSAGE CONTENT INTENT」「SERVER MEMBERS INTENT」を ON
-6. **OAuth2 → URL Generator**
-   - Scopes: `bot`, `applications.commands`
-   - Bot Permissions: `Read Messages`, `Send Messages`, `Add Reactions`, `Read Message History`
-   - 出てきた URL でサーバーに招待
+🆗 リアクションを押すとチーム分け実行
 
----
+🎲 リアクションを押すと ランダム分け（team_simple） を実行
 
-## 2) プロジェクト作成
+/show_participants
+現在の参加者を表示します。
 
-```bash
-mkdir lol-team-bot && cd lol-team-bot
-npm init -y
-npm i discord.js better-sqlite3 dotenv
-npm i -D nodemon
-mkdir src
-```
+/reset_participants
+参加者リストをリセットします。
 
-`package.json` に以下を追加:
-```json
-"scripts": {
-  "start": "node src/bot.js",
-  "dev": "nodemon src/bot.js"
-}
-```
+/leave
+自分の参加を取り消します。
 
-`.env` ファイルを作成:
-```
-DISCORD_TOKEN=あなたのBotトークン
-CLIENT_ID=あなたのアプリケーションID
-GUILD_ID=開発中のサーバーID（必須ではない）
-DEFAULT_BALANCE_DIFF=50
-DEFAULT_WIN_DELTA=10
-```
+/kick_from_lol @user
+指定したユーザーを参加リストから外します（誰でも実行可）。
 
----
+🏆 チーム分け
 
-## 3) ソースコード配置
+/team
+参加者を強さポイントに基づいてバランス良く分けます。
+各チームの合計ポイント差を表示します。
 
-`src/bot.js` にキャンバスのコードをコピー。
+リアクション操作
 
----
+🆗 → /team（ポイントを考慮した分け方）
 
-## 4) ローカルで動作確認
+🎲 → /team_simple（ポイント無視でランダム分け）
 
-```bash
-npm run dev
-```
+マッチID
+チーム分け時に「マッチID」が自動で発行され、勝敗登録に利用します。
 
-ターミナルに `Logged in as <botname>` と出たら成功。Discord サーバーに `/lobby` を打ってみて、リアクションできればOK。
+🥇 勝敗登録
 
----
+/result <matchId?> winner:<A|B>
+勝者チームを登録します。
 
-## 5) GitHub にアップロード
+matchId を指定しない場合は最新マッチが対象
 
-```bash
-git init
-git add .
-git commit -m "first commit"
-git branch -M main
-git remote add origin https://github.com/あなたの名前/lol-team-bot.git
-git push -u origin main
-```
+例: /result winner:A
 
-`.env` は **必ず .gitignore に追加** してください。
+/win <A|B> <matchId?>
+勝敗を簡単に登録します。
 
----
+例: /win A（最新マッチが対象）
 
-## 5.5) .gitignore の設定
+例: /win B 1234（マッチID 1234 の勝敗を登録）
 
-リポジトリ作成時に GitHub で `.gitignore` テンプレートを選べます。ここでは **Node** を選んでください。これで `node_modules/` などが無視されます。
+ショートカット
+テキストで win a / win b と入力しても勝敗登録できます。
 
-さらに以下を自分で追加するのが必須です:
-```
-.env
-/data/
-data.db
-```
+📊 ランキング
 
-これで秘密情報やデータベースファイルが誤って公開されることを防げます。
+/rank
+ランキングを表示します。
 
----
+ユーザーごとのポイント
 
-## 6) Render でデプロイ
+勝敗数
 
-1. [Render](https://dashboard.render.com/) にログイン
-2. **New → Background Worker** を選択
-3. GitHub リポジトリを選ぶ
-4. 設定:
-   - **Build Command**: `npm ci`
-   - **Start Command**: `npm start`
-5. **Environment Variables** に以下を追加
-   - `DISCORD_TOKEN`
-   - `CLIENT_ID`
-   - `GUILD_ID`（開発サーバーなら推奨）
-   - `DEFAULT_BALANCE_DIFF`
-   - `DEFAULT_WIN_DELTA`
-6. **Add Disk**（SQLite を消さないため）
-   - Name: `data`
-   - Size: 1GB
-   - Mount Path: `/opt/render/project/src`
-7. **Create Worker** を押す
+勝率
 
-デプロイ後、ログに `Logged in as ...` が出れば起動成功。
+連勝数
 
----
+⚡ ポイント管理
 
-## 7) 使い方
+/set_strength @user <points>
+指定ユーザーのポイントを直接設定します。
 
-1. `/lobby` → ✅ 参加者を集める
-2. 10人揃ったら 🆗 を押すと自動でチーム分け
-3. `/teams` → 手動で開始することも可能
-4. `/result winner:A delta:10` → 勝敗登録
+初期ポイント: 300
 
----
+勝敗による変動:
 
-## 8) 注意点
+勝利: +3 ＋ 連勝ボーナス（最大+3）
 
-- Render の無料プランはスリープする場合があります。常時稼働なら有料プランを推奨。
-- `.env` の管理は Render の **Environment Variables** に入れる。
-- DB (`data.db`) は Render の **Disk** をマウントして永続化すること。
-
----
-
-これで Render で公開 → Discord サーバーで使えるようになります。
+敗北: -2
