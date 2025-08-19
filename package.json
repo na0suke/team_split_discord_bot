@@ -3,8 +3,8 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "register": "node index.js register",
+    "start": "node src/index.js",
+    "register": "node src/index.js register",
     "register:global": "node src/index.js register-global",
     "register:guilds": "node src/index.js guild-register"
   },
