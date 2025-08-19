@@ -168,21 +168,16 @@ const commands = [
 if (process.argv[2] === 'register' || process.argv[2] === 'register-global') {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   (async () => {
-    await rest.put(
-      GUILD_ID
-        ? Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID)
-        : Routes.applicationCommands(CLIENT_ID),
-      { body: commands }
-    );
-    console.log('Slash commands registered.');
-    // CLIENT_ID が未設定でも動くよう、必要なら一時ログインで取得
+    // 1) まず appId を確定（CLIENT_ID が無ければトークンでログインして取得）
     let appId = CLIENT_ID;
     if (!appId) {
       const tmp = new Client({ intents: [] });
       await tmp.login(TOKEN);
-      appId = tmp.user.id;
+      appId = tmp.user.id; // Bot user id = application id
       await tmp.destroy();
     }
+
+    // 2) どちらで登録するかを明示的に分岐（どちらか一方だけ実行）
     if (process.argv[2] === 'register-global') {
       await rest.put(Routes.applicationCommands(appId), { body: commands });
       console.log('Global commands registered.');
@@ -191,6 +186,7 @@ if (process.argv[2] === 'register' || process.argv[2] === 'register-global') {
       await rest.put(Routes.applicationGuildCommands(appId, GUILD_ID), { body: commands });
       console.log('Guild commands registered.');
     }
+
     process.exit(0);
   })().catch((e) => {
     console.error(e);
