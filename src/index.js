@@ -155,9 +155,17 @@ const commands = [
     name: 'rank',
     description: 'ランキング表示（例: `/rank`）',
   },
+  {
+    name: 'join_name',
+    description: 'ユーザー名だけで参加者に追加（例: `/join_name name:たろう points:320`）',
+    options: [
+      { name: 'name', description: '表示名', type: 3, required: true },
+      { name: 'points', description: '初期ポイント（省略時300）', type: 4, required: false },
+    ],
+  },
 ];
 
-if (process.argv[2] === 'register') {
+if (process.argv[2] === 'register' || process.argv[2] === 'register-global') {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   (async () => {
     await rest.put(
@@ -167,6 +175,22 @@ if (process.argv[2] === 'register') {
       { body: commands }
     );
     console.log('Slash commands registered.');
+    // CLIENT_ID が未設定でも動くよう、必要なら一時ログインで取得
+    let appId = CLIENT_ID;
+    if (!appId) {
+      const tmp = new Client({ intents: [] });
+      await tmp.login(TOKEN);
+      appId = tmp.user.id;
+      await tmp.destroy();
+    }
+    if (process.argv[2] === 'register-global') {
+      await rest.put(Routes.applicationCommands(appId), { body: commands });
+      console.log('Global commands registered.');
+    } else {
+      if (!GUILD_ID) throw new Error('GUILD_ID is required for guild registration');
+      await rest.put(Routes.applicationGuildCommands(appId, GUILD_ID), { body: commands });
+      console.log('Guild commands registered.');
+    }
     process.exit(0);
   })().catch((e) => {
     console.error(e);
@@ -391,6 +415,33 @@ client.on('interactionCreate', async (interaction) => {
     if (!interaction.replied && !interaction.deferred) {
       await interaction.reply('内部エラーが発生しました。ログを確認してください。');
     }
+  }
+
+  if (name === 'join_name') {
+    const row = latestSignupMessageId.get(gid);
+    if (!row) return interaction.reply('現在受付中の募集はありません。');
+
+    const nameArg = interaction.options.getString('name', true).trim();
+    const pointsArg = interaction.options.getInteger('points'); // null 可
+
+    // 既存参加者の user_id を見て衝突回避つきの擬似IDを決定
+    const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
+    const baseId = `name:${nameArg}`;
+    let uid = baseId;
+    let c = 2;
+    while (existing.includes(uid)) {
+      uid = `${baseId}#${c}`;
+    }
+
+    // users にも登録（points 指定があれば上書き）
+    upsertUser.run({ guild_id: gid, user_id: uid, username: nameArg });
+    if (pointsArg !== null && pointsArg !== undefined) {
+      setStrength.run(gid, uid, nameArg, pointsArg);
+    }
+
+    // 参加者表へ追加
+    addParticipant.run(gid, row.message_id, uid, nameArg);
+    return interaction.reply(`**${nameArg}** を参加者に追加しました（ID: \`${uid}\`${pointsArg!=null?`, ⭐${pointsArg}`:''}）。`);
   }
 });
 
