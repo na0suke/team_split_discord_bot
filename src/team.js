@@ -6,35 +6,32 @@ function signatureOfTeams(teamA, teamB) {
 
 export function splitBalanced(players, lastSig = null) {
   const n = players.length;
-  if (n < 2) {
-    const sumA = players.reduce((s, p) => s + (p.points ?? 0), 0);
-    return { teamA: players, teamB: [], diff: Math.abs(sumA - 0), sumA, sumB: 0 };
-  }
+  if (n < 2) return { teamA: players, teamB: [], diff: 0, sumA: players.reduce((s,p)=>s+p.points,0), sumB: 0 };
   const sizeA = Math.floor(n / 2);
   const ids = players.map((_, i) => i);
 
-  function* combos(arr, k, start = 0, acc = []) {
+  function *combos(arr, k, start=0, acc=[]) {
     if (acc.length === k) { yield acc; return; }
-    for (let i = start; i < arr.length; i++) {
+    for (let i=start; i<arr.length; i++) {
       acc.push(arr[i]);
-      yield* combos(arr, k, i + 1, acc);
+      yield* combos(arr, k, i+1, acc);
       acc.pop();
     }
   }
 
   let best = null;
-  const total = players.reduce((s, p) => s + (p.points ?? 0), 0);
+  const total = players.reduce((s,p)=>s+p.points,0);
   for (const c of combos(ids, sizeA)) {
     const setA = new Set(c);
-    const teamA = players.filter((_, i) => setA.has(i));
-    const teamB = players.filter((_, i) => !setA.has(i));
-    const sumA = teamA.reduce((s, p) => s + (p.points ?? 0), 0);
+    const teamA = players.filter((_,i)=>setA.has(i));
+    const teamB = players.filter((_,i)=>!setA.has(i));
+    const sumA = teamA.reduce((s,p)=>s+p.points,0);
     const sumB = total - sumA;
     const diff = Math.abs(sumA - sumB);
 
     let penalty = 0;
     if (lastSig) {
-      const sig = signatureOfTeams(teamA.map(p => p.user_id), teamB.map(p => p.user_id));
+      const sig = signatureOfTeams(teamA.map(p=>p.user_id), teamB.map(p=>p.user_id));
       if (sig === lastSig) penalty += 100000; // 完全一致は避ける
     }
     const score = diff + penalty;
@@ -43,25 +40,17 @@ export function splitBalanced(players, lastSig = null) {
   return best;
 }
 
-// ポイント無視でランダムに二分割（上限なし）
+// ★ 強さ無視ランダム二分割
 export function splitSimple(players) {
-  const n = players.length;
-  if (n < 2) {
-    const sumA = players.reduce((s, p) => s + (p.points ?? 0), 0);
-    return { teamA: players, teamB: [], sumA, sumB: 0, diff: Math.abs(sumA - 0) };
-  }
-  const shuffled = [...players];
-  // Fisher–Yates
-  for (let i = n - 1; i > 0; i--) {
+  const arr = [...players];
+  for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
-  const sizeA = Math.ceil(n / 2); // 片方に1人多くてもOK
-  const teamA = shuffled.slice(0, sizeA);
-  const teamB = shuffled.slice(sizeA);
-  const sumA = teamA.reduce((s, p) => s + (p.points ?? 0), 0);
-  const sumB = teamB.reduce((s, p) => s + (p.points ?? 0), 0);
-  return { teamA, teamB, sumA, sumB, diff: Math.abs(sumA - sumB) };
+  const half = Math.floor(arr.length / 2);
+  const teamA = arr.slice(0, half);
+  const teamB = arr.slice(half);
+  return { teamA, teamB, diff: 0, sumA: 0, sumB: 0 };
 }
 
 export function formatTeamsEmbedFields(teamA, teamB) {
@@ -72,6 +61,6 @@ export function formatTeamsEmbedFields(teamA, teamB) {
   ];
 }
 
-export function signatureOfIds(a, b) {
-  return signatureOfTeams(a, b);
+export function signatureOfIds(a,b){
+  return signatureOfTeams(a,b);
 }

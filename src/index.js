@@ -7,16 +7,18 @@ import db, {
   upsertUser, getUser, setStrength, addWinLoss,
   createSignup, latestSignupMessageId, getSignup,
   addParticipant, removeParticipant, listParticipants, clearParticipantsByMessage,
-  createMatch, getLatestMatch, setMatchWinner,
+  createMatch, getLatestMatch, setMatchWinner, getMatchById,
   setLastSignature, getLastSignature,
   topRanks, getStreak, incStreak, resetStreak,
   getSetting, setSetting
 } from './db.js';
 import { splitBalanced, splitSimple, formatTeamsEmbedFields, signatureOfIds } from './team.js';
 
+// --- env ---
 const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 
+// --- client ---
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -28,43 +30,41 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
+// --- emojis ---
 const JOIN_EMOJI = '✅';
 const OK_EMOJI = '🆗';
-const SIMPLE_EMOJI = '🎲'; // ランダム二分割
+const SIMPLE_EMOJI = '🎲'; // 強さ無視ランダム
 
-// ===== 勝敗ポイントの可変設定（DB未設定時のデフォルト）=====
-const DEFAULT_STREAK_BONUS_CAP = 3; // 連勝ボーナス上限
-const DEFAULT_WIN_POINTS = 3;       // 勝利の基本ポイント
-const DEFAULT_LOSS_POINTS = -2;     // 敗北の基本ポイント
+// --- デフォルト設定（設定未登録時のフォールバック） ---
+const DEFAULT_STREAK_BONUS_CAP = 3;
+const DEFAULT_WIN_POINTS = 3;
+const DEFAULT_LOSS_POINTS = -2;
 
-function getConfigInt(key, fallback) {
-  const row = getSetting.get(key);
+// --- helpers ---
+function getConfigInt(guildId, key, fallback) {
+  const row = getSetting.get(guildId, key);
   if (!row) return fallback;
   const v = parseInt(row.value, 10);
   return Number.isFinite(v) ? v : fallback;
 }
-function getPointsConfig() {
+function getPointsConfig(guildId) {
   return {
-    win: getConfigInt('win_points', DEFAULT_WIN_POINTS),
-    loss: getConfigInt('loss_points', DEFAULT_LOSS_POINTS),
-    streakCap: getConfigInt('streak_cap', DEFAULT_STREAK_BONUS_CAP),
+    win: getConfigInt(guildId, 'win_points', DEFAULT_WIN_POINTS),
+    loss: getConfigInt(guildId, 'loss_points', DEFAULT_LOSS_POINTS),
+    streakCap: getConfigInt(guildId, 'streak_cap', DEFAULT_STREAK_BONUS_CAP),
   };
 }
 function calcWinBonus(streakBefore, cap) { return Math.min(streakBefore, cap); }
 
-// ===== ユーティリティ =====
-function ensureUser(user) {
-  upsertUser.run({ user_id: user.id, username: user.username || user.displayName });
+function ensureUser(user, guildId) {
+  upsertUser.run({ guild_id: guildId, user_id: user.id, username: user.username || user.displayName });
 }
-function participantCap(arr) { return arr.length > 10 ? arr.slice(0, 10) : arr; }
+function participantCap(arr) { return arr.length > 10 ? arr.slice(0,10) : arr; }
 function getLastInsertRowId() {
   return db.prepare('SELECT last_insert_rowid() AS id').get().id;
 }
-function getMatchByIdLocal(id) {
-  return db.prepare('SELECT * FROM matches WHERE id=?').get(id);
-}
 
-// ===== スラッシュコマンド定義 =====
+// --- commands ---
 const commands = [
   { name: 'start_signup', description: '参加受付を開始（例: `/start_signup`）' },
   { name: 'show_participants', description: '現在の参加者を表示（例: `/show_participants`）' },
@@ -120,6 +120,7 @@ async function registerCommands() {
     const id = tmp.user.id; await tmp.destroy(); return id;
   })());
   const rest = new REST({ version: '10' }).setToken(TOKEN);
+  // ギルドコマンド（即反映）。必要なら Routes.applicationCommands(appId) にしてグローバル化可
   await rest.put(Routes.applicationGuildCommands(appId, GUILD_ID), { body: commands });
 }
 
@@ -127,54 +128,49 @@ client.once(Events.ClientReady, () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// ===== 勝敗処理（ユーザー毎の内訳メッセージを返す）=====
-function processResult(winner, match) {
-  const { win: WIN_P, loss: LOSS_P, streakCap: CAP } = getPointsConfig();
-
+// --- 勝敗処理（ユーザー毎の内訳メッセージを返す） ---
+function processResult(guildId, winner, match) {
+  const { win: WIN_P, loss: LOSS_P, streakCap: CAP } = getPointsConfig(guildId);
   const teamA = JSON.parse(match.team_a);
   const teamB = JSON.parse(match.team_b);
   const linesA = [];
   const linesB = [];
-  const getBefore = (uid) => (getUser.get(uid)?.points ?? 300);
-  const getName   = (uid) => (getUser.get(uid)?.username ?? uid);
+  const getBefore = (uid) => (getUser.get(guildId, uid)?.points ?? 300);
+  const getName   = (uid) => (getUser.get(guildId, uid)?.username ?? uid);
 
   if (winner === 'A') {
-    // 勝者A
     for (const uid of teamA) {
       const before = getBefore(uid);
-      const streakBefore = (getStreak.get(uid)?.win_streak) ?? 0;
+      const streakBefore = (getStreak.get(guildId, uid)?.win_streak) ?? 0;
       const bonus = calcWinBonus(streakBefore, CAP);
       const delta = WIN_P + bonus;
-      addWinLoss.run(1, 0, delta, uid);
-      incStreak.run(uid);
+      addWinLoss.run(1, 0, delta, guildId, uid);
+      incStreak.run(guildId, uid);
       const after = before + delta;
       linesA.push(`${getName(uid)}: ${before} + ${WIN_P}${bonus ? ` + ${bonus}（連勝ボーナス）` : ''} => ${after}`);
     }
-    // 敗者B
     for (const uid of teamB) {
       const before = getBefore(uid);
-      addWinLoss.run(0, 1, LOSS_P, uid);
-      resetStreak.run(uid);
+      addWinLoss.run(0, 1, LOSS_P, guildId, uid);
+      resetStreak.run(guildId, uid);
       const after = before + LOSS_P;
       linesB.push(`${getName(uid)}: ${before} ${LOSS_P >= 0 ? '+' : ''}${LOSS_P} => ${after}`);
     }
   } else {
-    // 勝者B
     for (const uid of teamB) {
       const before = getBefore(uid);
-      const streakBefore = (getStreak.get(uid)?.win_streak) ?? 0;
+      const streakBefore = (getStreak.get(guildId, uid)?.win_streak) ?? 0;
       const bonus = calcWinBonus(streakBefore, CAP);
       const delta = WIN_P + bonus;
-      addWinLoss.run(1, 0, delta, uid);
-      incStreak.run(uid);
+      addWinLoss.run(1, 0, delta, guildId, uid);
+      incStreak.run(guildId, uid);
       const after = before + delta;
       linesB.push(`${getName(uid)}: ${before} + ${WIN_P}${bonus ? ` + ${bonus}（連勝ボーナス）` : ''} => ${after}`);
     }
-    // 敗者A
     for (const uid of teamA) {
       const before = getBefore(uid);
-      addWinLoss.run(0, 1, LOSS_P, uid);
-      resetStreak.run(uid);
+      addWinLoss.run(0, 1, LOSS_P, guildId, uid);
+      resetStreak.run(guildId, uid);
       const after = before + LOSS_P;
       linesA.push(`${getName(uid)}: ${before} ${LOSS_P >= 0 ? '+' : ''}${LOSS_P} => ${after}`);
     }
@@ -195,19 +191,16 @@ function processResult(winner, match) {
   return msg;
 }
 
-// ===== Interaction =====
+// --- Interaction ---
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   const { commandName } = interaction;
 
   if (commandName === 'start_signup') {
-    // 1) 直前の受付参加者をリセット
+    // 直前の受付参加者をリセット
     const prev = latestSignupMessageId.get()?.message_id;
-    if (prev) {
-      clearParticipantsByMessage.run(prev);
-    }
+    if (prev) clearParticipantsByMessage.run(prev);
 
-    // 2) 新しい受付メッセージ
     const embed = new EmbedBuilder()
       .setTitle('参加受付')
       .setDescription(
@@ -222,12 +215,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await msg.react(SIMPLE_EMOJI);
     createSignup.run(msg.id, msg.channelId, interaction.user.id, Date.now());
 
-    // 3) 公開アナウンス
-    if (prev) {
-      await interaction.followUp(`新しい受付を開始しました。前回の参加者リストをリセットしています。`);
-    } else {
-      await interaction.followUp(`受付を開始しました！`);
-    }
+    await interaction.followUp(`新しい受付を開始しました。前回の参加者リストをリセットしています。`);
     return;
   }
 
@@ -258,7 +246,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const target = interaction.options.getUser('user', true);
     const mid = latestSignupMessageId.get()?.message_id;
     if (!mid) return interaction.reply({ content: '参加受付が見つかりません。' });
-    removeParticipant.run(mid, target.id); // 誰でも可
+    removeParticipant.run(mid, target.id);
     const rows = listParticipants.all(mid);
     return interaction.reply(`**${interaction.user.username}** が **${target.username}** を参加リストから外しました。（現在 ${rows.length} 人）`);
   }
@@ -266,7 +254,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (commandName === 'set_strength') {
     const user = interaction.options.getUser('user', true);
     const points = interaction.options.getInteger('points', true);
-    setStrength.run(user.id, user.username, points);
+    setStrength.run(interaction.guildId, user.id, user.username, points);
     return interaction.reply(`**${user.username}** のポイントを **${points}** に設定しました。`);
   }
 
@@ -275,10 +263,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!mid) return interaction.reply({ content: '参加受付が見つかりません。' });
     let participants = listParticipants.all(mid);
     if (participants.length < 2) return interaction.reply('参加者が足りません。');
-    participants = participantCap(participants); // 11人以上→先頭10人
+    participants = participantCap(participants);
 
+    const gid = interaction.guildId;
     const enriched = participants.map(p => {
-      const u = getUser.get(p.user_id);
+      const u = getUser.get(gid, p.user_id);
       return { user_id: p.user_id, username: p.username, points: u?.points ?? 300 };
     });
 
@@ -286,7 +275,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const lastSig = lastSigRow?.signature || null;
     const result = splitBalanced(enriched, lastSig);
 
-    // 先に作成して matchId を取得
+    // 先に試合を作成してID取得
     createMatch.run(mid, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now());
     const matchId = getLastInsertRowId();
 
@@ -313,14 +302,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     let participants = listParticipants.all(mid);
     if (participants.length < 2) return interaction.reply('参加者が足りません。');
 
+    const gid = interaction.guildId;
     const enriched = participants.map(p => {
-      const u = getUser.get(p.user_id);
+      const u = getUser.get(gid, p.user_id);
       return { user_id: p.user_id, username: p.username, points: u?.points ?? 300 };
     });
 
-    const result = splitSimple(enriched); // ポイント無視
+    const result = splitSimple(enriched);
 
-    // 先に作成して matchId を取得
+    // 先に試合を作成してID取得
     createMatch.run(mid, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now());
     const matchId = getLastInsertRowId();
 
@@ -344,27 +334,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ? interaction.options.getString('winner', true).toUpperCase()
       : interaction.options.getString('team', true).toUpperCase();
 
-    // /result と /win の両方で任意 match_id をサポート（未指定は最新）
     let match;
     const optMatchId = interaction.options.getInteger('match_id', false);
     if (optMatchId != null) {
-      match = getMatchByIdLocal(optMatchId);
-      if (!match) {
-        return interaction.reply({ content: `マッチ #${optMatchId} が見つかりません。` });
-      }
+      match = getMatchById.get(optMatchId);
+      if (!match) return interaction.reply({ content: `マッチ #${optMatchId} が見つかりません。` });
     } else {
       match = getLatestMatch.get();
       if (!match) return interaction.reply({ content: '対戦データがありません。' });
     }
-
     if (match.winner) return interaction.reply('この対戦は既に結果登録済みです。');
 
-    const msg = processResult(winner, match);
+    const msg = processResult(interaction.guildId, winner, match);
     return interaction.reply({ content: `# Match #${match.id}\n${msg}` });
   }
 
   if (commandName === 'rank') {
-    const rows = topRanks.all();
+    const rows = topRanks.all(interaction.guildId);
     const lines = rows.map((r, i) => {
       const total = r.wins + r.losses;
       const wr = total ? (r.wins / total * 100).toFixed(1) : '0.0';
@@ -374,7 +360,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   if (commandName === 'show_points') {
-    const { win, loss, streakCap } = getPointsConfig();
+    const { win, loss, streakCap } = getPointsConfig(interaction.guildId);
     return interaction.reply(
       `現在の設定: 勝利 **${win}**, 敗北 **${loss}**, 連勝ボーナス上限 **${streakCap}**`
     );
@@ -389,18 +375,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const loss = interaction.options.getInteger('loss', false);
     const cap = interaction.options.getInteger('streak_cap', false);
 
-    if (win !== null)  setSetting.run('win_points', String(win));
-    if (loss !== null) setSetting.run('loss_points', String(loss));
-    if (cap !== null)  setSetting.run('streak_cap', String(cap));
+    if (win !== null)  setSetting.run(interaction.guildId, 'win_points', String(win));
+    if (loss !== null) setSetting.run(interaction.guildId, 'loss_points', String(loss));
+    if (cap !== null)  setSetting.run(interaction.guildId, 'streak_cap', String(cap));
 
-    const after = getPointsConfig();
+    const after = getPointsConfig(interaction.guildId);
     return interaction.reply(
       `設定を更新しました。\n勝利 **${after.win}**, 敗北 **${after.loss}**, 連勝ボーナス上限 **${after.streakCap}**`
     );
   }
 });
 
-// ===== 受付メッセージのリアクション =====
+// --- 受付メッセージのリアクション（誰でも OK/🎲 押下可能） ---
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   try {
     if (user.bot) return;
@@ -410,7 +396,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     if (!sign) return;
 
     if (reaction.emoji.name === JOIN_EMOJI) {
-      ensureUser(user);
+      ensureUser(user, message.guildId);
       addParticipant.run(message.id, user.id, user.username);
     }
 
@@ -418,26 +404,24 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       let participants = listParticipants.all(message.id);
       if (participants.length < 2) return message.reply('参加者が足りません。');
 
-      // 均衡は最大10人、ランダムは上限なし
       const isBalanced = reaction.emoji.name === OK_EMOJI;
       if (isBalanced) participants = participantCap(participants);
 
+      const gid = message.guildId;
       const enriched = participants.map(p => {
-        const u = getUser.get(p.user_id);
+        const u = getUser.get(gid, p.user_id);
         return { user_id: p.user_id, username: p.username, points: u?.points ?? 300 };
       });
 
-      let result, embed;
       if (isBalanced) {
         const lastSigRow = getLastSignature.get();
         const lastSig = lastSigRow?.signature || null;
-        result = splitBalanced(enriched, lastSig);
+        const result = splitBalanced(enriched, lastSig);
 
-        // 先に試合を作成してID取得
         createMatch.run(message.id, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now());
         const matchId = getLastInsertRowId();
 
-        embed = new EmbedBuilder()
+        const embed = new EmbedBuilder()
           .setTitle(`チーム分け結果（ポイント均衡） — Match #${matchId}`)
           .addFields(formatTeamsEmbedFields(result.teamA, result.teamB))
           .setFooter({ text: `合計差: ${result.diff}` })
@@ -452,13 +436,12 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
         const sig = signatureOfIds(result.teamA.map(p => p.user_id), result.teamB.map(p => p.user_id));
         setLastSignature.run(sig);
       } else {
-        result = splitSimple(enriched);
+        const result = splitSimple(enriched);
 
-        // 先に試合を作成してID取得
         createMatch.run(message.id, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now());
         const matchId = getLastInsertRowId();
 
-        embed = new EmbedBuilder()
+        const embed = new EmbedBuilder()
           .setTitle(`チーム分け結果（ランダム／ポイント無視） — Match #${matchId}`)
           .addFields(formatTeamsEmbedFields(result.teamA, result.teamB))
           .setColor(0x2ECC71)
@@ -475,7 +458,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   } catch (e) { console.error('ReactionAdd error', e); }
 });
 
-// ===== ショートカット: "win a" / "win b" （最新マッチのみ対象）=====
+// --- ショートカット: "win a" / "win b"（最新マッチ） ---
 client.on(Events.MessageCreate, async (msg) => {
   if (msg.author.bot) return;
   const m = msg.content.trim().toLowerCase();
@@ -486,11 +469,11 @@ client.on(Events.MessageCreate, async (msg) => {
   if (!match) return msg.reply('対戦データがありません。');
   if (match.winner) return msg.reply('既に結果登録済みです。');
 
-  const text = processResult(winner, match);
+  const text = processResult(msg.guildId, winner, match);
   return msg.reply(`# Match #${match.id}\n${text}`);
 });
 
-// ===== コマンド登録 & ログイン =====
+// --- コマンド登録 & ログイン ---
 if (process.argv[2] === 'register') {
   (async () => {
     const tmp = new Client({ intents: [] });
