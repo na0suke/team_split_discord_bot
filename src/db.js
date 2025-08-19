@@ -1,6 +1,16 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 
-const db = new Database(process.env.DB_PATH || './bot.db');
+// 環境変数が無ければ ./data/bot.db を使う
+const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), 'data', 'bot.db');
+
+// 親ディレクトリを必ず作成
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+
+const db = new Database(DB_PATH);
+
+// 以降は今のスキーマ作成・準備文そのままでOK
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS signup (
