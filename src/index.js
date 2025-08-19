@@ -179,12 +179,12 @@ client.once('ready', () => {
 });
 
 // ===== helpers =====
-function ensureUserRow(guildId, user) {
-  upsertUser.run({
-    guild_id: guildId,
-    user_id: user.id,
-    username: user.username || user.displayName || `user_${user.id}`,
-  });
+ function ensureUserRow(gid, user) {
+   upsertUser.run({
+     guild_id: gid,
+     user_id: user.id,
+     username: user.username || user.displayName || `user_${user.id}`
+   });
 }
 
 function formatResultLine(before, delta1, delta2, after, label = '') {
@@ -208,7 +208,7 @@ client.on('interactionCreate', async (interaction) => {
       await msg.react(JOIN_EMOJI);
       await msg.react(OK_EMOJI);
       await msg.react(DICE_EMOJI);
-      createSignup.run(gid, msg.id, msg.channelId, interaction.user.id, Date.now());
+      createSignup.run(interaction.guildId, msg.id, msg.channelId, interaction.user.id, Date.now());
       return;
     }
 
