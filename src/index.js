@@ -132,6 +132,7 @@ const commands = [
       { name: 'points', description: '初期ポイント（省略時300）', type: 4, required: false },
     ],
   },
+  { name: 'help', description: 'コマンド一覧を表示' },
 ];
 
 // ========= コマンド登録 =========
@@ -719,6 +720,23 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
     // OK_EMOJI や他の絵文字を外しても、何もしません（既存挙動を維持）
   } catch (e) {
     console.error('ReactionRemove error', e);
+  }
+});
+
+//ヘルプ
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isChatInputCommand()) {
+    const { commandName } = interaction;
+
+    // ...既存処理...
+
+    if (commandName === 'help') {
+      const embed = new EmbedBuilder()
+        .setTitle('コマンド一覧')
+        .setColor(0x00AE86)
+        .setDescription(commands.map(c => `**/${c.name}** — ${c.description}`).join('\n'));
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
   }
 });
 
