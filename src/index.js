@@ -605,22 +605,25 @@ client.on('messageCreate', async (msg) => {
 
       const after = before + delta;
       const label = beforeRow?.username || `<@${uid}>`;
-      loserLines.push(`${label}: ${before} ${cfg.loss} ${penalty?`-${penalty}`:''} => ${after}`);
+      // ここを修正：表示形式を整理
+      const penaltyText = penalty > 0 ? ` -${penalty}` : '';
+      loserLines.push(`${label}: ${before} ${cfg.loss}${penaltyText} => ${after}`);
     }
 
     setMatchWinner.run(winner, match.id, msg.guildId);
 
+    // ここも修正：見やすい形式に変更
     const text = [
-      `勝者: Team ${winner} を登録しました。`,
+      `**勝者: Team ${winner}**`,
       '',
-      `# Team ${winner} (勝利)`,
-      ...(winnerLines.length ? winnerLines : ['- 変更なし']),
+      `**Team ${winner} (勝利)**`,
+      ...winnerLines.map(line => `• ${line}`),
       '',
-      `# Team ${winner === 'A' ? 'B' : 'A'} (敗北)`,
-      ...(loserLines.length ? loserLines : ['- 変更なし']),
+      `**Team ${winner === 'A' ? 'B' : 'A'} (敗北)**`,
+      ...loserLines.map(line => `• ${line}`),
     ].join('\\n');
 
-    return msg.reply(text);
+      return msg.reply(text);
   } catch (e) {
     console.error(e);
     try { await msg.reply('内部エラーが発生しました。ログを確認してください。'); } catch {}
