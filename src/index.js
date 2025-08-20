@@ -1,4 +1,3 @@
-// src/index.js
 import 'dotenv/config';
 import {
   Client,
@@ -251,6 +250,7 @@ async function sendFinal(interaction, payload, acked) {
 
 // ===== Slash command handling =====
 client.on('interactionCreate', async (interaction) => {
+  console.log('[start_signup]', { id: interaction.id, pid: process.pid, ts: Date.now() });
   if (!interaction.isCommand()) return;
   const gid = interaction.guildId;
   const name = interaction.commandName;
