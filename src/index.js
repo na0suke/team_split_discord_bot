@@ -260,6 +260,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     // --- /start_signup ---
     if (name === 'start_signup') {
+      console.log('start_signup called:', {
+        interactionId: interaction.id,
+        timestamp: Date.now(),
+        guildId: interaction.guildId,
+        userId: interaction.user.id
+      });
+
       const acked = await tryDefer(interaction); // 先にACK
       const embed = new EmbedBuilder()
         .setTitle('参加受付中')
