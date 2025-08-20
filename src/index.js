@@ -613,10 +613,10 @@ client.on('messageCreate', async (msg) => {
     const text = [
       `勝者: Team ${winner} を登録しました。`,
       '',
-      '# Team A',
+      '# 勝利',
       ...(linesA.length ? linesA : ['- 変更なし']),
       '',
-      '# Team B',
+      '# 敗北',
       ...(linesB.length ? linesB : ['- 変更なし']),
     ].join('\n');
 
