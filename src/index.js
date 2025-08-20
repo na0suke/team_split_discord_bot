@@ -402,14 +402,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         : interaction.options.getString('team', true);
       const matchIdOpt = interaction.options.getInteger('match_id');
       const match = matchIdOpt ? getMatchById.get(matchIdOpt, gid) : getLatestMatch.get(gid);
-      if (!match) {
-        if (acked) await interaction.editReply('対象マッチが見つかりません。');
-        else {
-          try { await interaction.reply('対象マッチが見つかりません。'); }
-          catch { const ch = interaction.channel ?? (interaction.channelId ? await interaction.client.channels.fetch(interaction.channelId) : null); if (ch) await ch.send('対象マッチが見つかりません。'); }
-        }
-        return;
-      }
+      // ... 省略 ...
 
       const cfg = getPointsConfig();
       const teamA = JSON.parse(match.team_a);
@@ -417,38 +410,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const winners = winner === 'A' ? teamA : teamB;
       const losers  = winner === 'A' ? teamB : teamA;
 
-      const linesA = [];
-      const linesB = [];
+      const winnerLines = [];  // ← 変更：勝者用の配列
+      const loserLines = [];   // ← 変更：敗者用の配列
 
       // 勝者：2連勝目から +1、連敗はリセット
       for (const uid of winners) {
-        const beforeRow = getUser.get(gid, uid);
-        const before = beforeRow?.points ?? 300;
-        const streakBefore = (getStreak.get(gid, uid)?.win_streak) ?? 0;
-        const bonus = Math.min(streakBefore, cfg.streak_cap); // 初勝利は +0
-        const delta = cfg.win + bonus;
-        addWinLoss.run(1, 0, delta, gid, uid);
-        incStreak.run(cfg.streak_cap, gid, uid);
-        resetLossStreak.run(gid, uid);
-        const after = before + delta;
-        const label = beforeRow?.username || `<@${uid}>`;
-        linesA.push(formatResultLine(before, cfg.win, bonus, after, label));
+        // ... ポイント計算処理 ...
+        winnerLines.push(formatResultLine(before, cfg.win, bonus, after, label));  // ← 変更
       }
 
       // 敗者：2連敗目から -1（上限あり）。勝利ストリークリセット
       for (const uid of losers) {
-        const beforeRow = getUser.get(gid, uid);
-        const before = beforeRow?.points ?? 300;
-        const lsBefore = (getLossStreak.get(gid, uid)?.loss_streak) ?? 0;
-        const lcap = cfg.loss_streak_cap ?? cfg.streak_cap;
-        const penalty = Math.min(lsBefore, lcap); // 初敗北は 0
-        const delta = cfg.loss - penalty;        // 例: -2 -1 = -3
-        addWinLoss.run(0, 1, delta, gid, uid);
-        incLossStreak.run(lcap, gid, uid);
-        resetStreak.run(gid, uid);
-        const after = before + delta;
-        const label = beforeRow?.username || `<@${uid}>`;
-        linesB.push(formatResultLine(before, cfg.loss, -penalty, after, label));
+        // ... ポイント計算処理 ...
+        loserLines.push(formatResultLine(before, cfg.loss, -penalty, after, label));  // ← 変更
       }
 
       setMatchWinner.run(winner, match.id, gid);
@@ -456,12 +430,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const text = [
         `勝者: Team ${winner} を登録しました。`,
         '',
-        '# Team A',
-        ...(linesA.length ? linesA : ['- 変更なし']),
+        `# Team ${winner} (勝利)`,  // ← 変更：勝利チームを動的に表示
+        ...(winnerLines.length ? winnerLines : ['- 変更なし']),  // ← 変更
         '',
-        '# Team B',
-        ...(linesB.length ? linesB : ['- 変更なし']),
-      ].join('\n');
+        `# Team ${winner === 'A' ? 'B' : 'A'} (敗北)`,  // ← 変更：敗北チームを動的に表示
+        ...(loserLines.length ? loserLines : ['- 変更なし']),  // ← 変更
+      ].join('\\n');
 
       // ←← ここを“単一路線”に
       if (acked) {
@@ -569,43 +543,19 @@ client.on('messageCreate', async (msg) => {
     const winners = winner === 'A' ? teamA : teamB;
     const losers  = winner === 'A' ? teamB : teamA;
 
-    const linesA = [];
-    const linesB = [];
+    const winnerLines = [];  // ← 変更：勝者用の配列
+    const loserLines = [];   // ← 変更：敗者用の配列
 
     // 勝者：2連勝目から +1、連敗はリセット
     for (const uid of winners) {
-      const beforeRow = getUser.get(msg.guildId, uid);
-      const before = beforeRow?.points ?? 300;
-      const streakBefore = (getStreak.get(msg.guildId, uid)?.win_streak) ?? 0;
-      const bonus = Math.min(streakBefore, cfg.streak_cap); // 初勝利は +0
-      const delta = cfg.win + bonus;
-
-      addWinLoss.run(1, 0, delta, msg.guildId, uid);
-      incStreak.run(cfg.streak_cap, msg.guildId, uid);
-      resetLossStreak.run(msg.guildId, uid);
-
-      const after = before + delta;
-      const label = beforeRow?.username || `<@${uid}>`;
-      linesA.push(`${label}: ${before} +${cfg.win}${bonus?` +${bonus}`:''} => ${after}`);
+      // ... ポイント計算処理 ...
+      winnerLines.push(`${label}: ${before} +${cfg.win}${bonus?` +${bonus}`:''} => ${after}`);  // ← 変更
     }
 
     // 敗者：2連敗目から -1（上限あり）。勝利ストリークリセット
     for (const uid of losers) {
-      const beforeRow = getUser.get(msg.guildId, uid);
-      const before = beforeRow?.points ?? 300;
-
-      const lsBefore = (getLossStreak.get(msg.guildId, uid)?.loss_streak) ?? 0;
-      const lcap = cfg.loss_streak_cap ?? cfg.streak_cap;
-      const penalty = Math.min(lsBefore, lcap); // 初敗北は 0
-      const delta = cfg.loss - penalty;        // 例: -2 -1 = -3
-
-      addWinLoss.run(0, 1, delta, msg.guildId, uid);
-      incLossStreak.run(lcap, msg.guildId, uid);
-      resetStreak.run(msg.guildId, uid);
-
-      const after = before + delta;
-      const label = beforeRow?.username || `<@${uid}>`;
-      linesB.push(`${label}: ${before} ${cfg.loss} ${penalty?`-${penalty}`:''} => ${after}`);
+      // ... ポイント計算処理 ...
+      loserLines.push(`${label}: ${before} ${cfg.loss} ${penalty?`-${penalty}`:''} => ${after}`);  // ← 変更
     }
 
     setMatchWinner.run(winner, match.id, msg.guildId);
@@ -613,12 +563,12 @@ client.on('messageCreate', async (msg) => {
     const text = [
       `勝者: Team ${winner} を登録しました。`,
       '',
-      '# 勝利',
-      ...(linesA.length ? linesA : ['- 変更なし']),
+      `# Team ${winner} (勝利)`,  // ← 変更：勝利チームを動的に表示
+      ...(winnerLines.length ? winnerLines : ['- 変更なし']),  // ← 変更
       '',
-      '# 敗北',
-      ...(linesB.length ? linesB : ['- 変更なし']),
-    ].join('\n');
+      `# Team ${winner === 'A' ? 'B' : 'A'} (敗北)`,  // ← 変更：敗北チームを動的に表示
+      ...(loserLines.length ? loserLines : ['- 変更なし']),  // ← 変更
+    ].join('\\n');
 
     return msg.reply(text);
   } catch (e) {
