@@ -8,6 +8,7 @@ import {
   REST,
   Routes,
   Events,
+  MessageFlags,
 } from 'discord.js';
 import {
   upsertUser,
@@ -735,7 +736,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setTitle('コマンド一覧')
         .setColor(0x00AE86)
         .setDescription(commands.map(c => `**/${c.name}** — ${c.description}`).join('\n'));
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     }
   }
 });
