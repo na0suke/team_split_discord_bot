@@ -702,30 +702,29 @@ client.on('messageReactionAdd', async (reaction, user) => {
   }
 });
 
-// ▼▼▼ ここから追記：受付メッセージのリアクション解除で参加解除 ▼▼▼
+// 受付メッセージのリアクション解除 → 参加解除（✋だけ）
 client.on(Events.MessageReactionRemove, async (reaction, user) => {
   try {
     if (user.bot) return;
-
-    // partial対応（必要なら）
     if (reaction.partial) await reaction.fetch();
 
-    const { message } = reaction;
+    const message = reaction.message;
+    const gid = message.guildId;
+    const emoji = reaction.emoji.name;
 
-    // 受付メッセージ以外は無視
-    const sign = getSignup.get(message.id);
-    if (!sign) return;
+    // 参加用リアクション以外は無視
+    if (emoji !== JOIN_EMOJI) return;
 
-    // 参加用リアクション（既存の JOIN_EMOJI 定数）だけを対象にする
-    if (reaction.emoji.name === JOIN_EMOJI) {
-      // 参加解除
-      removeParticipant.run(message.id, user.id);
+    // このギルドの「直近の受付」かつ、そのメッセージに限定
+    const row = latestSignupMessageId.get(gid);
+    if (!row || row.message_id !== message.id) return;
 
-      // ※挙動を増やしたくないので通知は出しません（必要なら次の1行を有効に）
-      // await message.channel.send(`**${user.username}** が参加を取り消しました。`);
-    }
+    // ←← ここが重要：guild_id を含めて3引数で削除
+    removeParticipant.run(gid, message.id, user.id);
 
-    // OK_EMOJI や他の絵文字を外しても、何もしません（既存挙動を維持）
+    // （任意の通知）
+    // const count = listParticipants.all(gid, message.id).length;
+    // await message.channel.send(`**${user.username}** が参加を取り消しました。（現在 ${count} 人）`);
   } catch (e) {
     console.error('ReactionRemove error', e);
   }
