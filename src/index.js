@@ -8,6 +8,7 @@ import {
   PermissionsBitField,
   REST,
   Routes,
+  Events,
 } from 'discord.js';
 import {
   upsertUser,
