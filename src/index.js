@@ -271,7 +271,8 @@ client.on('interactionCreate', async (interaction) => {
       } else {
         // 未ACK → 通常 reply（期限切れならチャンネル送信にフォールバック）
         try {
-          msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+          await interaction.reply({ embeds: [embed] });
+          msg = await interaction.fetchReply();
         } catch (e) {
           const channel = interaction.channel ?? (interaction.channelId ? await interaction.client.channels.fetch(interaction.channelId) : null);
           if (!channel) throw e;
