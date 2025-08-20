@@ -177,7 +177,7 @@ if (process.argv[2] === 'clear-global') {
   })().catch((e) => { console.error(e); process.exit(1); });
 }
 
-// 複数ギルド一括登録（追加機能）
+// 複数ギルド一括登録
 if (process.argv[2] === 'guild-register') {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   (async () => {
@@ -260,14 +260,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     // --- /start_signup ---
     if (name === 'start_signup') {
-      console.log('start_signup called:', {
-        interactionId: interaction.id,
-        timestamp: Date.now(),
-        guildId: interaction.guildId,
-        userId: interaction.user.id
-      });
-
-      const acked = await tryDefer(interaction); // 先にACK
+      const acked = await tryDefer(interaction);
       const embed = new EmbedBuilder()
         .setTitle('参加受付中')
         .setDescription('✋ 参加 / ✅ バランス分け / 🎲 ランダム分け（強さ無視）');
@@ -453,23 +446,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       setMatchWinner.run(winner, match.id, gid);
 
+      // ★ 表示を「勝利／敗北」に統一（Team表記を排除）
       const text = [
-        `勝者: Team ${winner} を登録しました。`,
+        `勝敗登録: Team ${winner} の勝利を記録しました。`,
         '',
-        `# Team ${winner} (勝利)`,
+        `# 勝利`,
         ...(winnerLines.length ? winnerLines : ['- 変更なし']),
         '',
-        `# Team ${winner === 'A' ? 'B' : 'A'} (敗北)`,
+        `# 敗北`,
         ...(loserLines.length ? loserLines : ['- 変更なし']),
-      ].join('\\n');
+      ].join('\n');
 
       // ここを「単一路線」に
       if (acked) {
         await interaction.editReply(text);
       } else {
-        try {
-          await interaction.reply(text);
-        } catch {
+        try { await interaction.reply(text); }
+        catch {
           const ch = interaction.channel ?? (interaction.channelId ? await interaction.client.channels.fetch(interaction.channelId) : null);
           if (ch) await ch.send(text);
         }
@@ -547,7 +540,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// ===== Message shortcuts: "win a" / "win b"（/win と重複しないようガード） =====
+// ===== Message shortcuts: "win a" / "win b" =====
 client.on('messageCreate', async (msg) => {
   try {
     if (msg.author.bot) return;
@@ -558,7 +551,7 @@ client.on('messageCreate', async (msg) => {
     // 直近のマッチ（ギルド毎）
     const match = getLatestMatch.get(msg.guildId);
     if (!match) return msg.reply('対象マッチが見つかりません。');
-    if (match.winner) return; // ☆ 既に登録済み → 何もしない（重複防止）
+    if (match.winner) return; // 既に登録済み → 何もしない（重複防止）
 
     const winner = m.endsWith('a') ? 'A' : 'B';
 
@@ -612,18 +605,18 @@ client.on('messageCreate', async (msg) => {
 
     setMatchWinner.run(winner, match.id, msg.guildId);
 
-    // ここも修正：見やすい形式に変更
+    // ★ こちらも「勝利／敗北」表示に統一
     const text = [
-      `**勝者: Team ${winner}**`,
+      `**勝敗登録: Team ${winner} の勝利**`,
       '',
-      `**Team ${winner} (勝利)**`,
+      `**勝利**`,
       ...winnerLines.map(line => `• ${line}`),
       '',
-      `**Team ${winner === 'A' ? 'B' : 'A'} (敗北)**`,
+      `**敗北**`,
       ...loserLines.map(line => `• ${line}`),
-    ].join('\\n');
+    ].join('\n');
 
-      return msg.reply(text);
+    return msg.reply(text);
   } catch (e) {
     console.error(e);
     try { await msg.reply('内部エラーが発生しました。ログを確認してください。'); } catch {}
@@ -737,9 +730,6 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isChatInputCommand()) {
     const { commandName } = interaction;
-
-    // ...既存処理...
-
     if (commandName === 'help') {
       const embed = new EmbedBuilder()
         .setTitle('コマンド一覧')
