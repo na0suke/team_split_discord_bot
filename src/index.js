@@ -250,7 +250,7 @@ async function sendFinal(interaction, payload, acked) {
 }
 
 // ===== Slash command handling =====
-client.on('interactionCreate', async (interaction) => {
+client.on(Events.InteractionCreate, async (interaction) => {
   console.log('[start_signup]', { id: interaction.id, pid: process.pid, ts: Date.now() });
   if (!interaction.isCommand()) return;
   const gid = interaction.guildId;
