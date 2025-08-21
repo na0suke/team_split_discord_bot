@@ -60,6 +60,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
@@ -346,7 +347,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const u = getUser.get(gid, p.user_id);
         return {
           user_id: p.user_id,
-          username: u?.username || p.username || p.user_id,
+          username: p.username || u?.username || p.user_id,
           points: u?.points ?? 300,
         };
       });
@@ -640,7 +641,12 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
     if (emoji === JOIN_EMOJI) {
       ensureUserRow(gid, user);
-      addParticipant.run(gid, message.id, user.id, user.username);
+      // ギルド上の表示名を取得（なければ username）
+      const member =
+        message.guild?.members?.cache.get(user.id)
+        ?? await message.guild.members.fetch(user.id).catch(() => null);
+      const display = member?.displayName || user.username;
+      addParticipant.run(gid, message.id, user.id, display);
       return;
     }
 
@@ -654,7 +660,8 @@ client.on('messageReactionAdd', async (reaction, user) => {
       const u = getUser.get(gid, p.user_id);
       return {
         user_id: p.user_id,
-        username: u?.username || p.username || p.user_id,
+        // 参加時に保存した displayName を最優先
+        username: p.username || u?.username || p.user_id,
         points: u?.points ?? 300,
       };
     });
