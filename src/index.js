@@ -203,6 +203,42 @@ client.once('ready', () => {
 });
 
 // ===== helpers =====
+// 重複参加チェック：同じDiscordユーザーが異なる方法で参加していないかチェック
+function checkDuplicateParticipation(guildId, messageId, targetUserId) {
+  const participants = listParticipants.all(guildId, messageId);
+  
+  // 1. 実ユーザーIDでの参加をチェック
+  const realUserExists = participants.some(p => p.user_id === targetUserId);
+  
+  // 2. 擬似IDでの参加もチェック（同じDiscordユーザーが name: で参加済みか）
+  const member = client.guilds.cache.get(guildId)?.members?.cache.get(targetUserId);
+  let pseudoUserIds = [];
+  
+  if (member) {
+    // そのユーザーの可能な擬似ID形式を生成
+    const displayName = member.displayName;
+    const username = member.user.username;
+    
+    // name:表示名 や name:username の形で参加している可能性
+    const possibleIds = [
+      `name:${displayName}`,
+      `name:${username}`,
+      // 番号付きバリエーションもチェック
+      ...Array.from({length: 10}, (_, i) => `name:${displayName}#${i+2}`),
+      ...Array.from({length: 10}, (_, i) => `name:${username}#${i+2}`)
+    ];
+    
+    pseudoUserIds = participants.filter(p => possibleIds.includes(p.user_id)).map(p => p.user_id);
+  }
+  
+  return {
+    isDuplicate: realUserExists || pseudoUserIds.length > 0,
+    realUserExists,
+    pseudoUserIds,
+    totalParticipations: (realUserExists ? 1 : 0) + pseudoUserIds.length
+  };
+}
+
 function ensureUserRow(gid, user) {
   upsertUser.run({
     guild_id: gid,
@@ -347,7 +383,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const u = getUser.get(gid, p.user_id);
         return {
           user_id: p.user_id,
-          username: p.username || u?.username || p.user_id,
+          username: u?.username || p.username || p.user_id,
           points: u?.points ?? 300,
         };
       });
@@ -509,31 +545,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // --- /join_name ---
+// // /join_name コマンドの処理部分を修正
     if (name === 'join_name') {
       const row = latestSignupMessageId.get(gid);
       if (!row) return interaction.reply('現在受付中の募集はありません。');
 
       const nameArg = interaction.options.getString('name', true).trim();
-      const pointsArg = interaction.options.getInteger('points'); // null 可
+      const pointsArg = interaction.options.getInteger('points');
+      const userArg = interaction.options.getUser('user'); // 新しいオプション
 
-      // 衝突しない擬似IDを決定
-      const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
-      const baseId = `name:${nameArg}`;
-      let uid = baseId;
-      let c = 2;
-      while (existing.includes(uid)) {
-        uid = `${baseId}#${c++}`;
+      let uid, displayName;
+
+      if (userArg) {
+        // 既存のDiscordユーザーが指定された場合
+        uid = userArg.id;
+        displayName = nameArg; // カスタム表示名を使用
+        
+        // 既に参加しているかチェック
+        const existing = listParticipants.all(gid, row.message_id);
+        if (existing.some(p => p.user_id === uid)) {
+          return interaction.reply(`<@${uid}> は既に参加済みです。`);
+        }
+        
+        // users テーブルに登録（displayNameで上書き）
+        upsertUser.run({ guild_id: gid, user_id: uid, username: displayName });
+      } else {
+        // 擬似ユーザーの場合（従来の動作）
+        const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
+        const baseId = `name:${nameArg}`;
+        uid = baseId;
+        let c = 2;
+        while (existing.includes(uid)) {
+          uid = `${baseId}#${c++}`;
+        }
+        displayName = nameArg;
+        
+        // users テーブルに登録
+        upsertUser.run({ guild_id: gid, user_id: uid, username: displayName });
       }
 
-      // users にも登録（points 指定があれば上書き）
-      upsertUser.run({ guild_id: gid, user_id: uid, username: nameArg });
+      // ポイント設定
       if (pointsArg !== null && pointsArg !== undefined) {
-        setStrength.run(gid, uid, nameArg, pointsArg);
+        setStrength.run(gid, uid, displayName, pointsArg);
       }
 
-      // 参加者表へ追加（返信はIDを見せない）
-      addParticipant.run(gid, row.message_id, uid, nameArg);
-      return interaction.reply(`**${nameArg}** を参加者に追加しました${pointsArg!=null?`（⭐${pointsArg}）`:''}。`);
+      // 参加者表へ追加
+      addParticipant.run(gid, row.message_id, uid, displayName);
+      
+      const userMention = userArg ? ` (<@${uid}>)` : '';
+      return interaction.reply(`**${displayName}**${userMention} を参加者に追加しました${pointsArg!=null?`（⭐${pointsArg}）`:''}。`);
     }
   } catch (e) {
     console.error(e);
@@ -625,6 +685,7 @@ client.on('messageCreate', async (msg) => {
 });
 
 // ===== Reaction handling (✋ / ✅ / 🎲) =====
+// リアクション処理部分も少し修正（重複チェック追加）
 client.on('messageReactionAdd', async (reaction, user) => {
   try {
     if (user.bot) return;
@@ -640,10 +701,15 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (!row || row.message_id !== message.id) return;
 
     if (emoji === JOIN_EMOJI) {
+      // 重複チェック（リアクション + 擬似ID参加の両方をチェック）
+      const dupCheck = checkDuplicateParticipation(gid, message.id, user.id);
+      if (dupCheck.isDuplicate) {
+        // 既に参加済みの場合は何もしない（静かに無視）
+        return;
+      }
+      
       ensureUserRow(gid, user);
-      // ギルド上の表示名を取得（なければ username）
-      const member =
-        message.guild?.members?.cache.get(user.id)
+      const member = message.guild?.members?.cache.get(user.id)
         ?? await message.guild.members.fetch(user.id).catch(() => null);
       const display = member?.displayName || user.username;
       addParticipant.run(gid, message.id, user.id, display);
