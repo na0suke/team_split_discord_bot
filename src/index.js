@@ -216,16 +216,16 @@ function ensureUserRow(gid, user) {
   const member = client.guilds.cache.get(gid)?.members?.cache.get(user.id);
   let displayName = member?.displayName || user.displayName || user.username || `user_${user.id}`;
   
-  // 表示名を正規化
+  // 表示名を正規化（@記号除去）
   displayName = normalizeDisplayName(displayName);
+  
+  console.log(`ensureUserRow: ${user.id} "${member?.displayName || user.displayName || user.username}" -> "${displayName}"`);
   
   upsertUser.run({
     guild_id: gid,
     user_id: user.id,
     username: displayName
   });
-  
-  console.log(`ensureUserRow: ${user.id} -> "${displayName}"`);
 }
 
 // formatTeamLines 関数を index.js 内で定義
@@ -711,7 +711,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
     const row = latestSignupMessageId.get(gid);
     if (!row || row.message_id !== message.id) return;
 
-if (emoji === JOIN_EMOJI) {
+    if (emoji === JOIN_EMOJI) {
       // シンプルで確実な重複チェック
       const participants = listParticipants.all(gid, message.id);
       const alreadyJoined = participants.some(p => p.user_id === user.id);
@@ -726,23 +726,23 @@ if (emoji === JOIN_EMOJI) {
         return;
       }
       
-      console.log(`ALLOWING: ${user.username} (${user.id}) to join via reaction`);
-      
-      // ★ 重要：表示名を確実に正規化
+      // ★ 表示名を最初に正規化して統一
       const member = message.guild?.members?.cache.get(user.id) ?? 
                      await message.guild.members.fetch(user.id).catch(() => null);
       let displayName = member?.displayName || user.username;
-      displayName = normalizeDisplayName(displayName); // ここで@記号を除去
+      displayName = normalizeDisplayName(displayName); // @記号除去
       
-      console.log(`Reaction join: raw="${member?.displayName || user.username}" -> normalized="${displayName}"`);
+      console.log(`ALLOWING: ${user.username} (${user.id}) to join via reaction as "${displayName}"`);
+      console.log(`Raw name: "${member?.displayName || user.username}" -> Normalized: "${displayName}"`);
       
-      // 正規化された表示名でユーザー登録
+      // 正規化された名前でユーザー登録
       upsertUser.run({
         guild_id: gid,
         user_id: user.id,
-        username: displayName  // 正規化済みの名前
+        username: displayName
       });
       
+      // 同じ正規化された名前で参加者登録
       addParticipant.run(gid, message.id, user.id, displayName);
       console.log(`${displayName} joined via reaction (user_id: ${user.id})`);
       return;
