@@ -296,6 +296,63 @@ async function sendFinal(interaction, payload, acked) {
   }
 }
 
+//08/24 19:34
+// formatTeamLines 関数を index.js 内で定義
+function formatTeamLines(team) {
+  return team.map((user) => {
+    const points = user.points ?? 300;
+    let displayName;
+    
+    // 疑似ユーザー（name:で始まるID）の場合は、usernameをそのまま表示
+    if (user.user_id.startsWith('name:')) {
+      displayName = user.username || user.user_id.replace(/^name:/, '');
+    } else {
+      // 実際のDiscordユーザーの場合はメンション形式
+      displayName = `<@${user.user_id}>`;
+    }
+    
+    return `${displayName} (⭐${points})`;
+  }).join('\n');
+}
+
+// formatResultLine 関数も修正
+function formatResultLine(before, delta1, delta2, after, user_id, username) {
+  const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
+  const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
+  const base = `${before} ${d1}${d2} => ${after}`;
+  
+  let label;
+  if (user_id.startsWith('name:')) {
+    label = username || user_id.replace(/^name:/, '');
+  } else {
+    label = `<@${user_id}>`;
+  }
+  
+  return `${label}: ${base}`;
+}
+
+// show_participants コマンドの修正版
+function formatParticipantsList(list) {
+  return list.map((p) => {
+    // 疑似ユーザーの場合は username をそのまま表示
+    if (p.user_id.startsWith('name:')) {
+      return p.username || p.user_id.replace(/^name:/, '');
+    } else {
+      // 実際のDiscordユーザーの場合はメンション形式
+      return `<@${p.user_id}>`;
+    }
+  }).join(', ');
+}
+
+// rank表示用の名前フォーマット関数
+function formatRankDisplayName(user_id, username) {
+  if (user_id.startsWith('name:')) {
+    return username || user_id.replace(/^name:/, '');
+  } else {
+    return username || user_id;
+  }
+}
+
 // ===== Slash command handling =====
 client.on(Events.InteractionCreate, async (interaction) => {
   console.log('[start_signup]', { id: interaction.id, pid: process.pid, ts: Date.now() });
@@ -474,14 +531,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const beforeRow = getUser.get(gid, uid);
         const before = beforeRow?.points ?? 300;
         const streakBefore = (getStreak.get(gid, uid)?.win_streak) ?? 0;
-        const bonus = Math.min(streakBefore, cfg.streak_cap); // 初勝利は +0
+        const bonus = Math.min(streakBefore, cfg.streak_cap);
         const delta = cfg.win + bonus;
         addWinLoss.run(1, 0, delta, gid, uid);
         incStreak.run(cfg.streak_cap, gid, uid);
         resetLossStreak.run(gid, uid);
         const after = before + delta;
-        const label = beforeRow?.username || `<@${uid}>`;
-        winnerLines.push(formatResultLine(before, cfg.win, bonus, after, label));
+        const username = beforeRow?.username || uid;
+        winnerLines.push(formatResultLine(before, cfg.win, bonus, after, uid, username));
       }
 
       // 敗者：2連敗目から -1（上限あり）。勝利ストリークリセット
@@ -490,14 +547,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const before = beforeRow?.points ?? 300;
         const lsBefore = (getLossStreak.get(gid, uid)?.loss_streak) ?? 0;
         const lcap = cfg.loss_streak_cap ?? cfg.streak_cap;
-        const penalty = Math.min(lsBefore, lcap); // 初敗北は 0
-        const delta = cfg.loss - penalty;        // 例: -2 -1 = -3
+        const penalty = Math.min(lsBefore, lcap);
+        const delta = cfg.loss - penalty;
         addWinLoss.run(0, 1, delta, gid, uid);
         incLossStreak.run(lcap, gid, uid);
         resetStreak.run(gid, uid);
         const after = before + delta;
-        const label = beforeRow?.username || `<@${uid}>`;
-        loserLines.push(formatResultLine(before, cfg.loss, -penalty, after, label));
+        const username = beforeRow?.username || uid;
+        loserLines.push(formatResultLine(before, cfg.loss, -penalty, after, uid, username));
       }
 
       setMatchWinner.run(winner, match.id, gid);
@@ -676,8 +733,9 @@ client.on('messageCreate', async (msg) => {
       resetLossStreak.run(msg.guildId, uid);
 
       const after = before + delta;
-      const label = beforeRow?.username || `<@${uid}>`;
-      winnerLines.push(`${label}: ${before} +${cfg.win}${bonus?` +${bonus}`:''} => ${after}`);
+      const username = beforeRow?.username || uid;
+      // formatResultLine を使って統一された表示
+      winnerLines.push(formatResultLine(before, cfg.win, bonus, after, uid, username));
     }
 
     // 敗者：2連敗目から -1（上限あり）。勝利ストリークリセット
@@ -695,10 +753,9 @@ client.on('messageCreate', async (msg) => {
       resetStreak.run(msg.guildId, uid);
 
       const after = before + delta;
-      const label = beforeRow?.username || `<@${uid}>`;
-      // ここを修正：表示形式を整理
-      const penaltyText = penalty > 0 ? ` -${penalty}` : '';
-      loserLines.push(`${label}: ${before} ${cfg.loss}${penaltyText} => ${after}`);
+      const username = beforeRow?.username || uid;
+      // formatResultLine を使って統一された表示
+      loserLines.push(formatResultLine(before, cfg.loss, -penalty, after, uid, username));
     }
 
     setMatchWinner.run(winner, match.id, msg.guildId);
