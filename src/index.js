@@ -198,7 +198,7 @@ if (process.argv[2] === 'guild-register') {
   })().catch((e) => { console.error(e); process.exit(1); });
 }
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
