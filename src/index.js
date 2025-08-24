@@ -248,20 +248,20 @@ function ensureUserRow(gid, user) {
 }
 
 // 勝敗登録時の表示も修正
-function formatResultLine(before, delta1, delta2, after, user_id, username) {
-  const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
-  const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
-  const base = `${before} ${d1}${d2} => ${after}`;
+// function formatResultLine(before, delta1, delta2, after, user_id, username) {
+//   const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
+//   const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
+//   const base = `${before} ${d1}${d2} => ${after}`;
   
-  let label;
-  if (user_id.startsWith('name:')) {
-    label = username || user_id.replace(/^name:/, '');
-  } else {
-    label = `<@${user_id}>`;
-  }
+//   let label;
+//   if (user_id.startsWith('name:')) {
+//     label = username || user_id.replace(/^name:/, '');
+//   } else {
+//     label = `<@${user_id}>`;
+//   }
   
-  return `${label}: ${base}`;
-}
+//   return `${label}: ${base}`;
+// }
 
 // === 応答安定化ヘルパー ===
 // 期限内なら deferReply、期限切れ(10062)なら false を返す
