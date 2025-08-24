@@ -37,7 +37,6 @@ import {
   getLastSignature,
   updatePointsConfig,
   getPointsConfig,
-  db,
 } from './db.js';
 import { splitBalanced, splitRandom } from './team.js';
 
@@ -133,6 +132,7 @@ const commands = [
     options: [
       { name: 'name', description: '表示名', type: 3, required: true },
       { name: 'points', description: '初期ポイント（省略時300）', type: 4, required: false },
+      { name: 'user', description: '既存Discordユーザー（省略時は疑似ユーザー）', type: 6, required: false },
     ],
   },
   { name: 'help', description: 'コマンド一覧を表示' },
@@ -204,66 +204,7 @@ client.once('clientReady', () => {
 });
 
 // ===== helpers =====
-// 2. 既存ユーザーの重複を強制的に統合する関数
-function forceConsolidateUser(guildId, userId) {
-  try {
-    // そのユーザーのすべてのレコードを取得
-    const allRecords = db.prepare(`
-      SELECT * FROM users WHERE guild_id = ? AND user_id = ?
-    `).all(guildId, userId);
-    
-    if (allRecords.length <= 1) return false; // 重複なし
-    
-    console.log(`Consolidating ${allRecords.length} records for user ${userId}`);
-    
-    // 最新の表示名を取得
-    const member = client.guilds.cache.get(guildId)?.members?.cache.get(userId);
-    const latestDisplayName = normalizeDisplayName(
-      member?.displayName || member?.user?.username || allRecords[0].username || userId
-    );
-    
-    // 最良のデータを選択（試合数、ポイントなどを考慮）
-    const bestRecord = allRecords.reduce((best, current) => {
-      const bestGames = (best.wins || 0) + (best.losses || 0);
-      const currentGames = (current.wins || 0) + (current.losses || 0);
-      
-      // より多くの試合をしている方を選択、同じなら高いポイントの方
-      if (currentGames > bestGames) return current;
-      if (currentGames === bestGames && (current.points || 0) > (best.points || 0)) return current;
-      return best;
-    });
-    
-    // すべてのレコードを削除
-    db.prepare(`DELETE FROM users WHERE guild_id = ? AND user_id = ?`).run(guildId, userId);
-    
-    // 統合されたレコードを作成
-    const insertStmt = db.prepare(`
-      INSERT INTO users (guild_id, user_id, username, points, wins, losses, win_streak, loss_streak)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    insertStmt.run(
-      guildId,
-      userId,
-      latestDisplayName,
-      bestRecord.points || 300,
-      bestRecord.wins || 0,
-      bestRecord.losses || 0,
-      bestRecord.win_streak || 0,
-      bestRecord.loss_streak || 0
-    );
-    
-    console.log(`Consolidated user ${userId} -> "${latestDisplayName}" with ${bestRecord.points || 300} points`);
-    return true;
-    
-  } catch (error) {
-    console.error(`Error consolidating user ${userId}:`, error);
-    return false;
-  }
-}
-
-
-// 1. 表示名を正規化する関数
+// 表示名を正規化する関数
 function normalizeDisplayName(name) {
   if (!name) return name;
   // @記号を削除し、前後の空白を除去
@@ -271,7 +212,6 @@ function normalizeDisplayName(name) {
 }
 
 // ensureUserRow関数を修正して、常に最新の表示名で更新
-// 2. ensureUserRow関数を修正して重複を防ぐ
 function ensureUserRow(gid, user) {
   const member = client.guilds.cache.get(gid)?.members?.cache.get(user.id);
   let displayName = member?.displayName || user.displayName || user.username || `user_${user.id}`;
@@ -279,46 +219,62 @@ function ensureUserRow(gid, user) {
   // 表示名を正規化
   displayName = normalizeDisplayName(displayName);
   
-  // 既存のレコードをチェックして統合
-  const existing = getUser.get(gid, user.id);
-  if (existing) {
-    // 既存レコードがある場合は表示名のみ更新
-    const stmt = db.prepare(`
-      UPDATE users 
-      SET username = ? 
-      WHERE guild_id = ? AND user_id = ?
-    `);
-    stmt.run(displayName, gid, user.id);
-  } else {
-    // 新規作成
-    upsertUser.run({
-      guild_id: gid,
-      user_id: user.id,
-      username: displayName
-    });
-  }
+  upsertUser.run({
+    guild_id: gid,
+    user_id: user.id,
+    username: displayName
+  });
   
   console.log(`ensureUserRow: ${user.id} -> "${displayName}"`);
 }
 
-// 勝敗登録時の表示も修正
-// function formatResultLine(before, delta1, delta2, after, user_id, username) {
-//   const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
-//   const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
-//   const base = `${before} ${d1}${d2} => ${after}`;
+// formatTeamLines 関数を index.js 内で定義
+function formatTeamLines(team) {
+  return team.map((user) => {
+    const points = user.points ?? 300;
+    let displayName;
+    
+    // 疑似ユーザー（name:で始まるID）の場合は、usernameをそのまま表示
+    if (user.user_id.startsWith('name:')) {
+      displayName = user.username || user.user_id.replace(/^name:/, '');
+    } else {
+      // 実際のDiscordユーザーの場合はメンション形式
+      displayName = `<@${user.user_id}>`;
+    }
+    
+    return `${displayName} (⭐${points})`;
+  }).join('\n');
+}
+
+// formatResultLine 関数
+function formatResultLine(before, delta1, delta2, after, user_id, username) {
+  const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
+  const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
+  const base = `${before} ${d1}${d2} => ${after}`;
   
-//   let label;
-//   if (user_id.startsWith('name:')) {
-//     label = username || user_id.replace(/^name:/, '');
-//   } else {
-//     label = `<@${user_id}>`;
-//   }
+  let label;
+  if (user_id && user_id.startsWith('name:')) {
+    label = username || user_id.replace(/^name:/, '');
+  } else if (user_id) {
+    label = `<@${user_id}>`;
+  } else {
+    // 後方互換性のため
+    label = username || before;
+  }
   
-//   return `${label}: ${base}`;
-// }
+  return `${label}: ${base}`;
+}
+
+// rank表示用の名前フォーマット関数
+function formatRankDisplayName(user_id, username) {
+  if (user_id.startsWith('name:')) {
+    return username || user_id.replace(/^name:/, '');
+  } else {
+    return username || user_id;
+  }
+}
 
 // === 応答安定化ヘルパー ===
-// 期限内なら deferReply、期限切れ(10062)なら false を返す
 async function tryDefer(interaction, opts) {
   if (interaction.deferred || interaction.replied) return true;
   try {
@@ -330,7 +286,6 @@ async function tryDefer(interaction, opts) {
   }
 }
 
-// 最終返信：defer 済みなら editReply、未deferなら reply、どちらも失敗ならチャンネル送信
 async function sendFinal(interaction, payload, acked) {
   try {
     const already = acked ?? (interaction.deferred || interaction.replied);
@@ -350,66 +305,9 @@ async function sendFinal(interaction, payload, acked) {
   }
 }
 
-//08/24 19:34
-// formatTeamLines 関数を index.js 内で定義
-function formatTeamLines(team) {
-  return team.map((user) => {
-    const points = user.points ?? 300;
-    let displayName;
-    
-    // 疑似ユーザー（name:で始まるID）の場合は、usernameをそのまま表示
-    if (user.user_id.startsWith('name:')) {
-      displayName = user.username || user.user_id.replace(/^name:/, '');
-    } else {
-      // 実際のDiscordユーザーの場合はメンション形式
-      displayName = `<@${user.user_id}>`;
-    }
-    
-    return `${displayName} (⭐${points})`;
-  }).join('\n');
-}
-
-// formatResultLine 関数も修正
-function formatResultLine(before, delta1, delta2, after, user_id, username) {
-  const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
-  const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
-  const base = `${before} ${d1}${d2} => ${after}`;
-  
-  let label;
-  if (user_id.startsWith('name:')) {
-    label = username || user_id.replace(/^name:/, '');
-  } else {
-    label = `<@${user_id}>`;
-  }
-  
-  return `${label}: ${base}`;
-}
-
-// show_participants コマンドの修正版
-function formatParticipantsList(list) {
-  return list.map((p) => {
-    // 疑似ユーザーの場合は username をそのまま表示
-    if (p.user_id.startsWith('name:')) {
-      return p.username || p.user_id.replace(/^name:/, '');
-    } else {
-      // 実際のDiscordユーザーの場合はメンション形式
-      return `<@${p.user_id}>`;
-    }
-  }).join(', ');
-}
-
-// rank表示用の名前フォーマット関数
-function formatRankDisplayName(user_id, username) {
-  if (user_id.startsWith('name:')) {
-    return username || user_id.replace(/^name:/, '');
-  } else {
-    return username || user_id;
-  }
-}
-
 // ===== Slash command handling =====
 client.on(Events.InteractionCreate, async (interaction) => {
-  console.log('[start_signup]', { id: interaction.id, pid: process.pid, ts: Date.now() });
+  console.log('[interaction]', { id: interaction.id, pid: process.pid, ts: Date.now() });
   if (!interaction.isCommand()) return;
   const gid = interaction.guildId;
   const name = interaction.commandName;
@@ -424,11 +322,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       let msg;
       if (acked) {
-        // defer 済み → editReply → fetchReply（※editReplyにfetchReplyは渡さない）
         await interaction.editReply({ embeds: [embed] });
         msg = await interaction.fetchReply();
       } else {
-        // 未ACK → 通常 reply（期限切れならチャンネル送信にフォールバック）
         try {
           await interaction.reply({ embeds: [embed] });
           msg = await interaction.fetchReply();
@@ -450,7 +346,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // show_participants コマンドの表示も修正
+    // --- 参加者表示/操作 ---
     if (name === 'show_participants') {
       const row = latestSignupMessageId.get(gid);
       if (!row) return interaction.reply('現在受付中の募集はありません。');
@@ -458,11 +354,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!list.length) return interaction.reply('現在の参加者はいません。');
       
       const names = list.map((p) => {
-        // 疑似ユーザーの場合は username をそのまま表示
         if (p.user_id.startsWith('name:')) {
           return p.username || p.user_id.replace(/^name:/, '');
         } else {
-          // 実際のDiscordユーザーの場合はメンション形式
           return `<@${p.user_id}>`;
         }
       }).join(', ');
@@ -493,17 +387,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // --- 強さ設定 ---
-    // set_strengthコマンドも修正して表示名を統一
     if (name === 'set_strength') {
       const user = interaction.options.getUser('user', true);
       const points = interaction.options.getInteger('points', true);
       
-      // ユーザー情報を最新の表示名で登録
       ensureUserRow(gid, user);
-      
-      // 表示名取得
       const member = interaction.guild?.members?.cache.get(user.id);
-      const displayName = member?.displayName || user.username;
+      const displayName = normalizeDisplayName(member?.displayName || user.username);
       
       setStrength.run(gid, user.id, displayName, points);
       return interaction.reply(`${displayName} の強さを ${points} に設定しました。`);
@@ -535,7 +425,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } else {
         const rand = splitRandom(enriched);
         teamA = rand.teamA; teamB = rand.teamB;
-        signature = null; // ランダムは署名は更新しない
+        signature = null;
       }
 
       const sumA = teamA.reduce((s, u) => s + (u.points ?? 300), 0);
@@ -555,7 +445,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setTitle(`マッチ ID: ${matchId}`)
         .addFields(
           { name: titleA, value: formatTeamLines(teamA), inline: true },
-          { name: '\u200B', value: '\u200B', inline: true }, // 中央スペーサ
+          { name: '\u200B', value: '\u200B', inline: true },
           { name: titleB, value: formatTeamLines(teamB), inline: true },
         );
       return sendFinal(interaction, { embeds: [embed] }, acked);
@@ -571,12 +461,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const matchIdOpt = interaction.options.getInteger('match_id');
       const match = matchIdOpt ? getMatchById.get(matchIdOpt, gid) : getLatestMatch.get(gid);
       if (!match) {
-        if (acked) await interaction.editReply('対象マッチが見つかりません。');
-        else {
-          try { await interaction.reply('対象マッチが見つかりません。'); }
-          catch { const ch = interaction.channel ?? (interaction.channelId ? await interaction.client.channels.fetch(interaction.channelId) : null); if (ch) await ch.send('対象マッチが見つかりません。'); }
-        }
-        return;
+        return sendFinal(interaction, '対象マッチが見つかりません。', acked);
       }
 
       const cfg = getPointsConfig();
@@ -621,7 +506,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       setMatchWinner.run(winner, match.id, gid);
 
-      // ★ 表示を「勝利／敗北」に統一（Team表記を排除）
       const text = [
         `勝敗登録: Team ${winner} の勝利を記録しました。`,
         '',
@@ -632,25 +516,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ...(loserLines.length ? loserLines : ['- 変更なし']),
       ].join('\n');
 
-      // ここを「単一路線」に
-      if (acked) {
-        await interaction.editReply(text);
-      } else {
-        try { await interaction.reply(text); }
-        catch {
-          const ch = interaction.channel ?? (interaction.channelId ? await interaction.client.channels.fetch(interaction.channelId) : null);
-          if (ch) await ch.send(text);
-        }
-      }
-      return;
+      return sendFinal(interaction, text, acked);
     }
 
     // --- ポイント設定/表示・ランク ---
     if (name === 'set_points') {
-      const needManage = interaction.member?.permissions?.has?.(PermissionsBitField.Flags.ManageGuild);
-      // 必要なら権限制御を有効化:
-      // if (!needManage) return interaction.reply('このコマンドは Manage Server 権限者のみ実行できます。');
-
       const win  = interaction.options.getInteger('win');
       const loss = interaction.options.getInteger('loss');
       const cap  = interaction.options.getInteger('streak_cap');
@@ -672,7 +542,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     }
 
-    // rankコマンドの表示も修正（必要に応じて）
     if (name === 'rank') {
       const rows = topRanks.all(gid);
       if (!rows.length) return interaction.reply('ランキングはまだありません。');
@@ -687,7 +556,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // --- /join_name ---
-// // /join_name コマンドの処理部分を修正
     if (name === 'join_name') {
       const row = latestSignupMessageId.get(gid);
       if (!row) return interaction.reply('現在受付中の募集はありません。');
@@ -703,58 +571,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         uid = userArg.id;
         displayName = normalizeDisplayName(nameArg);
         
-        // ★ 簡潔で確実な重複チェック
+        // ★ シンプルで確実な重複チェック
         const participants = listParticipants.all(gid, row.message_id);
-        
-        // 1. 直接的な重複チェック（最重要）
         const alreadyJoined = participants.some(p => p.user_id === uid);
         
         if (alreadyJoined) {
-          console.log(`join_name blocked: ${userArg.username} (${uid}) already joined directly`);
-          return interaction.reply(`<@${uid}> は既に参加済みです。（リアクション参加）`);
+          console.log(`BLOCKED: ${userArg.username} (${uid}) already joined`);
+          return interaction.reply(`<@${uid}> は既に参加済みです。`);
         }
         
-        // 2. 名前による疑似参加もチェック
-        const member = interaction.guild?.members?.cache.get(uid);
-        if (member) {
-          const usernames = [
-            member.displayName,
-            member.user.username,
-            normalizeDisplayName(member.displayName),
-            normalizeDisplayName(member.user.username)
-          ].filter(Boolean);
-          
-          const nameConflicts = participants.filter(p => {
-            if (!p.user_id.startsWith('name:')) return false;
-            const pseudoName = p.user_id.replace(/^name:/, '').replace(/#\d+$/, '');
-            return usernames.includes(pseudoName);
-          });
-          
-          if (nameConflicts.length > 0) {
-            console.log(`join_name blocked: ${userArg.username} (${uid}) conflicts with name participants: ${nameConflicts.map(c => c.user_id).join(', ')}`);
-            return interaction.reply(`<@${uid}> は既に参加済みです。（name参加: ${nameConflicts.map(c => c.user_id).join(', ')}）`);
-          }
-        }
-        
-        // 重複なし → 参加処理
-        console.log(`join_name allowing: ${userArg.username} (${uid}) as "${displayName}"`);
-        
-        // 既存データを統合（もしあれば）
-        forceConsolidateUser(gid, uid);
+        console.log(`ALLOWING: ${userArg.username} (${uid}) to join as "${displayName}"`);
         
         // ユーザー登録
         ensureUserRow(gid, userArg);
         
-        // 表示名を統一
-        const stmt = db.prepare(`
-          UPDATE users 
-          SET username = ? 
-          WHERE guild_id = ? AND user_id = ?
-        `);
-        stmt.run(displayName, gid, uid);
-        
       } else {
-        // 疑似ユーザーの場合（従来通り）
+        // 疑似ユーザーの場合
         const normalizedName = normalizeDisplayName(nameArg);
         const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
         const baseId = `name:${normalizedName}`;
@@ -766,7 +598,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         displayName = normalizedName;
         
         upsertUser.run({ guild_id: gid, user_id: uid, username: displayName });
-        console.log(`join_name pseudo user: ${uid} as "${displayName}"`);
       }
 
       // ポイント設定
@@ -780,6 +611,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const userMention = userArg ? ` (<@${uid}>)` : '';
       return interaction.reply(`**${displayName}**${userMention} を参加者に追加しました${pointsArg!=null?`（⭐${pointsArg}）`:''}。`);
     }
+
   } catch (e) {
     console.error(e);
     await sendFinal(interaction, '内部エラーが発生しました。ログを確認してください。');
@@ -794,14 +626,12 @@ client.on('messageCreate', async (msg) => {
     const m = msg.content.trim().toLowerCase();
     if (m !== 'win a' && m !== 'win b') return;
 
-    // 直近のマッチ（ギルド毎）
     const match = getLatestMatch.get(msg.guildId);
     if (!match) return msg.reply('対象マッチが見つかりません。');
-    if (match.winner) return; // 既に登録済み → 何もしない（重複防止）
+    if (match.winner) return;
 
     const winner = m.endsWith('a') ? 'A' : 'B';
 
-    // /win と同じ集計ロジック
     const cfg = getPointsConfig();
     const teamA = JSON.parse(match.team_a);
     const teamB = JSON.parse(match.team_b);
@@ -811,12 +641,12 @@ client.on('messageCreate', async (msg) => {
     const winnerLines = [];
     const loserLines = [];
 
-    // 勝者：2連勝目から +1、連敗はリセット
+    // 勝者処理
     for (const uid of winners) {
       const beforeRow = getUser.get(msg.guildId, uid);
       const before = beforeRow?.points ?? 300;
       const streakBefore = (getStreak.get(msg.guildId, uid)?.win_streak) ?? 0;
-      const bonus = Math.min(streakBefore, cfg.streak_cap); // 初勝利は +0
+      const bonus = Math.min(streakBefore, cfg.streak_cap);
       const delta = cfg.win + bonus;
 
       addWinLoss.run(1, 0, delta, msg.guildId, uid);
@@ -825,19 +655,18 @@ client.on('messageCreate', async (msg) => {
 
       const after = before + delta;
       const username = beforeRow?.username || uid;
-      // formatResultLine を使って統一された表示
       winnerLines.push(formatResultLine(before, cfg.win, bonus, after, uid, username));
     }
 
-    // 敗者：2連敗目から -1（上限あり）。勝利ストリークリセット
+    // 敗者処理
     for (const uid of losers) {
       const beforeRow = getUser.get(msg.guildId, uid);
       const before = beforeRow?.points ?? 300;
 
       const lsBefore = (getLossStreak.get(msg.guildId, uid)?.loss_streak) ?? 0;
       const lcap = cfg.loss_streak_cap ?? cfg.streak_cap;
-      const penalty = Math.min(lsBefore, lcap); // 初敗北は 0
-      const delta = cfg.loss - penalty;        // 例: -2 -1 = -3
+      const penalty = Math.min(lsBefore, lcap);
+      const delta = cfg.loss - penalty;
 
       addWinLoss.run(0, 1, delta, msg.guildId, uid);
       incLossStreak.run(lcap, msg.guildId, uid);
@@ -845,13 +674,11 @@ client.on('messageCreate', async (msg) => {
 
       const after = before + delta;
       const username = beforeRow?.username || uid;
-      // formatResultLine を使って統一された表示
       loserLines.push(formatResultLine(before, cfg.loss, -penalty, after, uid, username));
     }
 
     setMatchWinner.run(winner, match.id, msg.guildId);
 
-    // ★ こちらも「勝利／敗北」表示に統一
     const text = [
       `**勝敗登録: Team ${winner} の勝利**`,
       '',
@@ -870,7 +697,6 @@ client.on('messageCreate', async (msg) => {
 });
 
 // ===== Reaction handling (✋ / ✅ / 🎲) =====
-// リアクション処理部分も少し修正（重複チェック追加）
 client.on('messageReactionAdd', async (reaction, user) => {
   try {
     if (user.bot) return;
@@ -886,69 +712,33 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (!row || row.message_id !== message.id) return;
 
     if (emoji === JOIN_EMOJI) {
-      // ★ 厳格な重複チェック
+      // シンプルで確実な重複チェック
       const participants = listParticipants.all(gid, message.id);
-      
-      // 1. 直接的な重複チェック
       const alreadyJoined = participants.some(p => p.user_id === user.id);
       
       if (alreadyJoined) {
-        console.log(`${user.username} already joined directly, removing reaction`);
+        console.log(`BLOCKED: ${user.username} (${user.id}) already joined`);
         try {
           await reaction.users.remove(user.id);
         } catch (e) {
-          console.log('Failed to remove duplicate reaction:', e.message);
+          console.log('Failed to remove reaction:', e.message);
         }
         return;
       }
       
-      // 2. 名前ベースの重複チェック
-      const member = message.guild?.members?.cache.get(user.id);
-      if (member) {
-        const userNames = [
-          normalizeDisplayName(member.displayName),
-          normalizeDisplayName(member.user.username),
-          normalizeDisplayName(member.user.globalName),
-          member.displayName,
-          member.user.username,
-          member.user.globalName,
-          `@${member.displayName}`,
-          `@${member.user.username}`
-        ].filter(Boolean).filter((name, index, arr) => arr.indexOf(name) === index);
-        
-        const nameBasedDuplicates = participants.filter(p => {
-          if (!p.user_id.startsWith('name:')) return false;
-          const nameFromId = p.user_id.replace(/^name:/, '').replace(/#\d+$/, '');
-          return userNames.includes(nameFromId);
-        });
-        
-        if (nameBasedDuplicates.length > 0) {
-          console.log(`${user.username} already joined via name (${nameBasedDuplicates.map(d => d.user_id).join(', ')}), removing reaction`);
-          try {
-            await reaction.users.remove(user.id);
-          } catch (e) {
-            console.log('Failed to remove duplicate reaction:', e.message);
-          }
-          return;
-        }
-      }
-      
-      // 重複なし → 参加処理
-      // 既存データがあれば統合
-      forceConsolidateUser(gid, user.id);
+      console.log(`ALLOWING: ${user.username} (${user.id}) to join via reaction`);
       
       ensureUserRow(gid, user);
-      
-      const member2 = message.guild?.members?.cache.get(user.id) ?? 
+      const member = message.guild?.members?.cache.get(user.id) ?? 
                      await message.guild.members.fetch(user.id).catch(() => null);
-      const displayName = normalizeDisplayName(member2?.displayName || user.username);
+      const displayName = normalizeDisplayName(member?.displayName || user.username);
       
       addParticipant.run(gid, message.id, user.id, displayName);
-      console.log(`${displayName} joined via reaction (user_id: ${user.id})`);
+      console.log(`${displayName} joined via reaction`);
       return;
     }
 
-    // チーム分け処理は既存のまま...
+    // チーム分け処理
     const raw = listParticipants.all(gid, message.id);
     if (raw.length < 2) {
       await message.channel.send('参加者が足りません。');
@@ -1012,25 +802,18 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
     const gid = message.guildId;
     const emoji = reaction.emoji.name;
 
-    // 参加用リアクション以外は無視
     if (emoji !== JOIN_EMOJI) return;
 
-    // このギルドの「直近の受付」かつ、そのメッセージに限定
     const row = latestSignupMessageId.get(gid);
     if (!row || row.message_id !== message.id) return;
 
-    // ←← ここが重要：guild_id を含めて3引数で削除
     removeParticipant.run(gid, message.id, user.id);
-
-    // （任意の通知）
-    // const count = listParticipants.all(gid, message.id).length;
-    // await message.channel.send(`**${user.username}** が参加を取り消しました。（現在 ${count} 人）`);
   } catch (e) {
     console.error('ReactionRemove error', e);
   }
 });
 
-//ヘルプ
+// ヘルプ
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isChatInputCommand()) {
     const { commandName } = interaction;
