@@ -258,16 +258,43 @@ function checkDuplicateParticipation(guildId, messageId, targetUserId) {
   };
 }
 
+
+// 1. 表示名を正規化する関数
+function normalizeDisplayName(name) {
+  if (!name) return name;
+  // @記号を削除し、前後の空白を除去
+  return name.replace(/^@+/, '').trim();
+}
+
 // ensureUserRow関数を修正して、常に最新の表示名で更新
+// 2. ensureUserRow関数を修正して重複を防ぐ
 function ensureUserRow(gid, user) {
   const member = client.guilds.cache.get(gid)?.members?.cache.get(user.id);
-  const currentDisplayName = member?.displayName || user.displayName || user.username || `user_${user.id}`;
+  let displayName = member?.displayName || user.displayName || user.username || `user_${user.id}`;
   
-  upsertUser.run({
-    guild_id: gid,
-    user_id: user.id,
-    username: currentDisplayName  // 常に最新の表示名で更新
-  });
+  // 表示名を正規化
+  displayName = normalizeDisplayName(displayName);
+  
+  // 既存のレコードをチェックして統合
+  const existing = getUser.get(gid, user.id);
+  if (existing) {
+    // 既存レコードがある場合は表示名のみ更新
+    const stmt = db.prepare(`
+      UPDATE users 
+      SET username = ? 
+      WHERE guild_id = ? AND user_id = ?
+    `);
+    stmt.run(displayName, gid, user.id);
+  } else {
+    // 新規作成
+    upsertUser.run({
+      guild_id: gid,
+      user_id: user.id,
+      username: displayName
+    });
+  }
+  
+  console.log(`ensureUserRow: ${user.id} -> "${displayName}"`);
 }
 
 // 勝敗登録時の表示も修正
@@ -676,9 +703,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (userArg) {
         // 既存のDiscordユーザーが指定された場合
         uid = userArg.id;
-        displayName = nameArg;
+        displayName = normalizeDisplayName(nameArg); // 正規化
         
-        // ★ 重複参加チェック（より詳細なログ付き）
+        // 重複参加チェック
         const dupCheck = checkDuplicateParticipation(gid, row.message_id, uid);
         if (dupCheck.isDuplicate) {
           let message = `<@${uid}> は既に参加済みです。`;
@@ -695,29 +722,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
             message += `（${details.join(' + ')}）`;
           }
           
-          console.log(`join_name duplicate blocked: ${userArg.username} (${uid})`);
-          console.log(`- Real user exists: ${dupCheck.realUserExists}`);
-          console.log(`- Pseudo user IDs: ${dupCheck.pseudoUserIds.join(', ')}`);
-          
           return interaction.reply(message);
         }
         
-        // users テーブルに登録
-        upsertUser.run({ guild_id: gid, user_id: uid, username: displayName });
-        console.log(`join_name success: ${userArg.username} (${uid}) as "${displayName}"`);
+        // ユーザー情報を統合して登録
+        ensureUserRow(gid, userArg);
+        
+        // 表示名も正規化して再設定
+        const stmt = db.prepare(`
+          UPDATE users 
+          SET username = ? 
+          WHERE guild_id = ? AND user_id = ?
+        `);
+        stmt.run(displayName, gid, uid);
+        
       } else {
         // 疑似ユーザーの場合
+        const normalizedName = normalizeDisplayName(nameArg);
         const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
-        const baseId = `name:${nameArg}`;
+        const baseId = `name:${normalizedName}`;
         uid = baseId;
         let c = 2;
         while (existing.includes(uid)) {
           uid = `${baseId}#${c++}`;
         }
-        displayName = nameArg;
+        displayName = normalizedName;
         
         upsertUser.run({ guild_id: gid, user_id: uid, username: displayName });
-        console.log(`join_name pseudo user: ${uid} as "${displayName}"`);
       }
 
       // ポイント設定
@@ -838,7 +869,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
     // messageReactionAddでも表示名を統一
     if (emoji === JOIN_EMOJI) {
-      // 重複チェック（既存のコード）
       const dupCheck = checkDuplicateParticipation(gid, message.id, user.id);
       if (dupCheck.isDuplicate) {
         console.log(`Duplicate participation detected for ${user.username} (${user.id})`);
@@ -850,12 +880,13 @@ client.on('messageReactionAdd', async (reaction, user) => {
         return;
       }
       
-      // ユーザー登録（最新の表示名で統一）
+      // ユーザー登録（正規化された表示名で）
       ensureUserRow(gid, user);
       
-      // 参加者テーブルにも同じ表示名で登録
+      // 参加者テーブルにも正規化された表示名で登録
       const member = message.guild?.members?.cache.get(user.id);
-      const displayName = member?.displayName || user.username;
+      let displayName = member?.displayName || user.username;
+      displayName = normalizeDisplayName(displayName);
       
       addParticipant.run(gid, message.id, user.id, displayName);
       console.log(`${displayName} joined via reaction`);
