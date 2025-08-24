@@ -207,55 +207,109 @@ client.once('clientReady', () => {
 function checkDuplicateParticipation(guildId, messageId, targetUserId) {
   const participants = listParticipants.all(guildId, messageId);
   
-  // 1. 実ユーザーIDでの参加をチェック
-  const realUserExists = participants.some(p => p.user_id === targetUserId);
+  // 直接的な重複チェック
+  const directMatch = participants.some(p => p.user_id === targetUserId);
   
-  // 2. 疑似IDでの参加もチェック（同じDiscordユーザーが name: で参加済みか）
-  const member = client.guilds.cache.get(guildId)?.members?.cache.get(targetUserId);
-  let pseudoUserIds = [];
+  // ユーザー名ベースの重複チェック
+  let nameBasedDuplicates = [];
   
-  if (member) {
-    // そのユーザーの可能な疑似ID形式を生成
-    const displayName = member.displayName;
-    const username = member.user.username;
-    const globalName = member.user.globalName; // Discord の新しいグローバル表示名
-    
-    // 可能性のあるすべての name: 形式をチェック
-    const possibleNames = [displayName, username];
-    if (globalName && globalName !== username) {
-      possibleNames.push(globalName);
-    }
-    
-    const possibleIds = [];
-    for (const name of possibleNames) {
-      if (name) {
-        possibleIds.push(`name:${name}`);
-        // 番号付きバリエーションもチェック（#2, #3, ... #10まで）
+  if (!targetUserId.startsWith('name:')) {
+    // 実ユーザーの場合、そのユーザーの可能な名前で疑似参加していないかチェック
+    const member = client.guilds.cache.get(guildId)?.members?.cache.get(targetUserId);
+    if (member) {
+      const possibleNames = [
+        member.displayName,
+        member.user.username,
+        member.user.globalName,
+        normalizeDisplayName(member.displayName),
+        normalizeDisplayName(member.user.username),
+        `@${member.displayName}`,
+        `@${member.user.username}`
+      ].filter(Boolean).filter((name, index, arr) => arr.indexOf(name) === index); // 重複除去
+      
+      const possiblePseudoIds = [];
+      possibleNames.forEach(name => {
+        possiblePseudoIds.push(`name:${name}`);
         for (let i = 2; i <= 10; i++) {
-          possibleIds.push(`name:${name}#${i}`);
+          possiblePseudoIds.push(`name:${name}#${i}`);
         }
-      }
+      });
+      
+      nameBasedDuplicates = participants.filter(p => possiblePseudoIds.includes(p.user_id));
     }
-    
-    pseudoUserIds = participants.filter(p => possibleIds.includes(p.user_id)).map(p => p.user_id);
   }
   
-  const isDuplicate = realUserExists || pseudoUserIds.length > 0;
-  const totalParticipations = (realUserExists ? 1 : 0) + pseudoUserIds.length;
+  const isDuplicate = directMatch || nameBasedDuplicates.length > 0;
   
-  // デバッグログ
   console.log(`Duplicate check for ${targetUserId}:`);
-  console.log(`- Real user exists: ${realUserExists}`);
-  console.log(`- Pseudo IDs found: ${pseudoUserIds.join(', ')}`);
-  console.log(`- Total participations: ${totalParticipations}`);
+  console.log(`- Direct match: ${directMatch}`);
+  console.log(`- Name-based duplicates: ${nameBasedDuplicates.map(d => d.user_id).join(', ')}`);
   console.log(`- Is duplicate: ${isDuplicate}`);
   
   return {
     isDuplicate,
-    realUserExists,
-    pseudoUserIds,
-    totalParticipations
+    realUserExists: directMatch,
+    pseudoUserIds: nameBasedDuplicates.map(d => d.user_id),
+    totalParticipations: (directMatch ? 1 : 0) + nameBasedDuplicates.length
   };
+}
+
+// 2. 既存ユーザーの重複を強制的に統合する関数
+function forceConsolidateUser(guildId, userId) {
+  try {
+    // そのユーザーのすべてのレコードを取得
+    const allRecords = db.prepare(`
+      SELECT * FROM users WHERE guild_id = ? AND user_id = ?
+    `).all(guildId, userId);
+    
+    if (allRecords.length <= 1) return false; // 重複なし
+    
+    console.log(`Consolidating ${allRecords.length} records for user ${userId}`);
+    
+    // 最新の表示名を取得
+    const member = client.guilds.cache.get(guildId)?.members?.cache.get(userId);
+    const latestDisplayName = normalizeDisplayName(
+      member?.displayName || member?.user?.username || allRecords[0].username || userId
+    );
+    
+    // 最良のデータを選択（試合数、ポイントなどを考慮）
+    const bestRecord = allRecords.reduce((best, current) => {
+      const bestGames = (best.wins || 0) + (best.losses || 0);
+      const currentGames = (current.wins || 0) + (current.losses || 0);
+      
+      // より多くの試合をしている方を選択、同じなら高いポイントの方
+      if (currentGames > bestGames) return current;
+      if (currentGames === bestGames && (current.points || 0) > (best.points || 0)) return current;
+      return best;
+    });
+    
+    // すべてのレコードを削除
+    db.prepare(`DELETE FROM users WHERE guild_id = ? AND user_id = ?`).run(guildId, userId);
+    
+    // 統合されたレコードを作成
+    const insertStmt = db.prepare(`
+      INSERT INTO users (guild_id, user_id, username, points, wins, losses, win_streak, loss_streak)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    insertStmt.run(
+      guildId,
+      userId,
+      latestDisplayName,
+      bestRecord.points || 300,
+      bestRecord.wins || 0,
+      bestRecord.losses || 0,
+      bestRecord.win_streak || 0,
+      bestRecord.loss_streak || 0
+    );
+    
+    console.log(`Consolidated user ${userId} -> "${latestDisplayName}" with ${bestRecord.points || 300} points`);
+    return true;
+    
+  } catch (error) {
+    console.error(`Error consolidating user ${userId}:`, error);
+    return false;
+  }
 }
 
 
@@ -670,22 +724,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // rankコマンドの表示も修正（必要に応じて）
     if (name === 'rank') {
+      const acked = await tryDefer(interaction);
+      
+      // まず重複ユーザーを自動統合
+      const allUsers = db.prepare(`
+        SELECT DISTINCT user_id FROM users WHERE guild_id = ? AND NOT user_id LIKE 'name:%'
+      `).all(gid);
+      
+      let consolidatedCount = 0;
+      for (const userRow of allUsers) {
+        if (forceConsolidateUser(gid, userRow.user_id)) {
+          consolidatedCount++;
+        }
+      }
+      
+      if (consolidatedCount > 0) {
+        console.log(`Auto-consolidated ${consolidatedCount} duplicate users before showing rank`);
+      }
+      
+      // 統合後のランキングを取得
       const rows = topRanks.all(gid);
-      if (!rows.length) return interaction.reply('ランキングはまだありません。');
+      if (!rows.length) return sendFinal(interaction, 'ランキングはまだありません。', acked);
+      
       const lines = rows.map((r, i) => {
         const rate = Math.round((r.winrate || 0) * 100);
-        let displayName;
-        
-        // 疑似ユーザーの場合
-        if (r.user_id.startsWith('name:')) {
-          displayName = r.username || r.user_id.replace(/^name:/, '');
-        } else {
-          displayName = r.username || r.user_id;
-        }
-        
+        const displayName = formatRankDisplayName(r.user_id, r.username);
         return `${i + 1}. ${displayName} — ⭐${r.points} / ${r.wins}W-${r.losses}L / ${rate}% (WS:${r.win_streak})`;
       });
-      return interaction.reply(['ランキング:', ...lines].join('\n'));
+      
+      const response = ['ランキング:', ...lines].join('\n');
+      if (consolidatedCount > 0) {
+        response += `\n\n（${consolidatedCount}人の重複データを自動統合しました）`;
+      }
+      
+      return sendFinal(interaction, response, acked);
     }
 
     // --- /join_name ---
@@ -703,32 +775,65 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (userArg) {
         // 既存のDiscordユーザーが指定された場合
         uid = userArg.id;
-        displayName = normalizeDisplayName(nameArg); // 正規化
+        displayName = normalizeDisplayName(nameArg);
         
-        // 重複参加チェック
-        const dupCheck = checkDuplicateParticipation(gid, row.message_id, uid);
-        if (dupCheck.isDuplicate) {
+        // ★ より厳格な重複チェック
+        const participants = listParticipants.all(gid, row.message_id);
+        
+        // 1. 直接参加チェック
+        const directParticipation = participants.some(p => p.user_id === uid);
+        
+        // 2. 名前ベース参加チェック
+        const member = interaction.guild?.members?.cache.get(uid);
+        let nameBasedParticipation = [];
+        
+        if (member) {
+          const allPossibleNames = [
+            member.displayName,
+            member.user.username,
+            member.user.globalName,
+            normalizeDisplayName(member.displayName),
+            normalizeDisplayName(member.user.username),
+            normalizeDisplayName(member.user.globalName),
+            `@${member.displayName}`,
+            `@${member.user.username}`,
+            nameArg,
+            normalizeDisplayName(nameArg)
+          ].filter(Boolean).filter((name, index, arr) => arr.indexOf(name) === index);
+          
+          nameBasedParticipation = participants.filter(p => {
+            if (!p.user_id.startsWith('name:')) return false;
+            const nameFromId = p.user_id.replace(/^name:/, '').replace(/#\d+$/, '');
+            return allPossibleNames.includes(nameFromId);
+          });
+        }
+        
+        if (directParticipation || nameBasedParticipation.length > 0) {
           let message = `<@${uid}> は既に参加済みです。`;
           const details = [];
           
-          if (dupCheck.realUserExists) {
+          if (directParticipation) {
             details.push('リアクション参加');
           }
-          if (dupCheck.pseudoUserIds.length > 0) {
-            details.push(`name参加（${dupCheck.pseudoUserIds.join(', ')}）`);
+          if (nameBasedParticipation.length > 0) {
+            details.push(`name参加（${nameBasedParticipation.map(p => p.user_id).join(', ')}）`);
           }
           
           if (details.length > 0) {
             message += `（${details.join(' + ')}）`;
           }
           
+          console.log(`join_name blocked duplicate: ${userArg.username} (${uid})`);
           return interaction.reply(message);
         }
         
-        // ユーザー情報を統合して登録
+        // 既存データを統合
+        forceConsolidateUser(gid, uid);
+        
+        // ユーザー登録
         ensureUserRow(gid, userArg);
         
-        // 表示名も正規化して再設定
+        // 表示名を正規化して更新
         const stmt = db.prepare(`
           UPDATE users 
           SET username = ? 
@@ -867,11 +972,15 @@ client.on('messageReactionAdd', async (reaction, user) => {
     const row = latestSignupMessageId.get(gid);
     if (!row || row.message_id !== message.id) return;
 
-    // messageReactionAddでも表示名を統一
     if (emoji === JOIN_EMOJI) {
-      const dupCheck = checkDuplicateParticipation(gid, message.id, user.id);
-      if (dupCheck.isDuplicate) {
-        console.log(`Duplicate participation detected for ${user.username} (${user.id})`);
+      // ★ 厳格な重複チェック
+      const participants = listParticipants.all(gid, message.id);
+      
+      // 1. 直接的な重複チェック
+      const alreadyJoined = participants.some(p => p.user_id === user.id);
+      
+      if (alreadyJoined) {
+        console.log(`${user.username} already joined directly, removing reaction`);
         try {
           await reaction.users.remove(user.id);
         } catch (e) {
@@ -880,25 +989,59 @@ client.on('messageReactionAdd', async (reaction, user) => {
         return;
       }
       
-      // ユーザー登録（正規化された表示名で）
+      // 2. 名前ベースの重複チェック
+      const member = message.guild?.members?.cache.get(user.id);
+      if (member) {
+        const userNames = [
+          normalizeDisplayName(member.displayName),
+          normalizeDisplayName(member.user.username),
+          normalizeDisplayName(member.user.globalName),
+          member.displayName,
+          member.user.username,
+          member.user.globalName,
+          `@${member.displayName}`,
+          `@${member.user.username}`
+        ].filter(Boolean).filter((name, index, arr) => arr.indexOf(name) === index);
+        
+        const nameBasedDuplicates = participants.filter(p => {
+          if (!p.user_id.startsWith('name:')) return false;
+          const nameFromId = p.user_id.replace(/^name:/, '').replace(/#\d+$/, '');
+          return userNames.includes(nameFromId);
+        });
+        
+        if (nameBasedDuplicates.length > 0) {
+          console.log(`${user.username} already joined via name (${nameBasedDuplicates.map(d => d.user_id).join(', ')}), removing reaction`);
+          try {
+            await reaction.users.remove(user.id);
+          } catch (e) {
+            console.log('Failed to remove duplicate reaction:', e.message);
+          }
+          return;
+        }
+      }
+      
+      // 重複なし → 参加処理
+      // 既存データがあれば統合
+      forceConsolidateUser(gid, user.id);
+      
       ensureUserRow(gid, user);
       
-      // 参加者テーブルにも正規化された表示名で登録
-      const member = message.guild?.members?.cache.get(user.id);
-      let displayName = member?.displayName || user.username;
-      displayName = normalizeDisplayName(displayName);
+      const member2 = message.guild?.members?.cache.get(user.id) ?? 
+                     await message.guild.members.fetch(user.id).catch(() => null);
+      const displayName = normalizeDisplayName(member2?.displayName || user.username);
       
       addParticipant.run(gid, message.id, user.id, displayName);
-      console.log(`${displayName} joined via reaction`);
+      console.log(`${displayName} joined via reaction (user_id: ${user.id})`);
       return;
     }
 
-    // チーム分け処理（OK_EMOJI, DICE_EMOJI）は従来通り
+    // チーム分け処理は既存のまま...
     const raw = listParticipants.all(gid, message.id);
     if (raw.length < 2) {
       await message.channel.send('参加者が足りません。');
       return;
     }
+    
     const enriched = raw.map((p) => {
       const u = getUser.get(gid, p.user_id);
       return {
