@@ -247,11 +247,20 @@ function ensureUserRow(gid, user) {
   });
 }
 
-function formatResultLine(before, delta1, delta2, after, label = '') {
+// 勝敗登録時の表示も修正
+function formatResultLine(before, delta1, delta2, after, user_id, username) {
   const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
   const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
   const base = `${before} ${d1}${d2} => ${after}`;
-  return label ? `${label}: ${base}` : base;
+  
+  let label;
+  if (user_id.startsWith('name:')) {
+    label = username || user_id.replace(/^name:/, '');
+  } else {
+    label = `<@${user_id}>`;
+  }
+  
+  return `${label}: ${base}`;
 }
 
 // === 応答安定化ヘルパー ===
@@ -330,13 +339,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // --- 参加者表示/操作 ---
+    // show_participants コマンドの表示も修正
     if (name === 'show_participants') {
       const row = latestSignupMessageId.get(gid);
       if (!row) return interaction.reply('現在受付中の募集はありません。');
       const list = listParticipants.all(gid, row.message_id);
       if (!list.length) return interaction.reply('現在の参加者はいません。');
-      const names = list.map((p) => `<@${p.user_id}>`).join(', ');
+      
+      const names = list.map((p) => {
+        // 疑似ユーザーの場合は username をそのまま表示
+        if (p.user_id.startsWith('name:')) {
+          return p.username || p.user_id.replace(/^name:/, '');
+        } else {
+          // 実際のDiscordユーザーの場合はメンション形式
+          return `<@${p.user_id}>`;
+        }
+      }).join(', ');
+      
       return interaction.reply(`参加者: ${names}`);
     }
 
@@ -534,12 +553,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     }
 
+    // rankコマンドの表示も修正（必要に応じて）
     if (name === 'rank') {
       const rows = topRanks.all(gid);
       if (!rows.length) return interaction.reply('ランキングはまだありません。');
       const lines = rows.map((r, i) => {
         const rate = Math.round((r.winrate || 0) * 100);
-        return `${i + 1}. ${r.username || r.user_id} — ⭐${r.points} / ${r.wins}W-${r.losses}L / ${rate}% (WS:${r.win_streak})`;
+        let displayName;
+        
+        // 疑似ユーザーの場合
+        if (r.user_id.startsWith('name:')) {
+          displayName = r.username || r.user_id.replace(/^name:/, '');
+        } else {
+          displayName = r.username || r.user_id;
+        }
+        
+        return `${i + 1}. ${displayName} — ⭐${r.points} / ${r.wins}W-${r.losses}L / ${rate}% (WS:${r.win_streak})`;
       });
       return interaction.reply(['ランキング:', ...lines].join('\n'));
     }
@@ -561,16 +590,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
         uid = userArg.id;
         displayName = nameArg; // カスタム表示名を使用
         
-        // 既に参加しているかチェック
-        const existing = listParticipants.all(gid, row.message_id);
-        if (existing.some(p => p.user_id === uid)) {
-          return interaction.reply(`<@${uid}> は既に参加済みです。`);
+        // ★ 重複参加チェック（リアクション参加 + 疑似ID参加の両方をチェック）
+        const dupCheck = checkDuplicateParticipation(gid, row.message_id, uid);
+        if (dupCheck.isDuplicate) {
+          let message = `<@${uid}> は既に参加済みです。`;
+          if (dupCheck.realUserExists && dupCheck.pseudoUserIds.length > 0) {
+            message += `（リアクション参加 + name参加: ${dupCheck.pseudoUserIds.join(', ')}）`;
+          } else if (dupCheck.realUserExists) {
+            message += '（リアクション参加）';
+          } else if (dupCheck.pseudoUserIds.length > 0) {
+            message += `（name参加: ${dupCheck.pseudoUserIds.join(', ')}）`;
+          }
+          return interaction.reply(message);
         }
         
         // users テーブルに登録（displayNameで上書き）
         upsertUser.run({ guild_id: gid, user_id: uid, username: displayName });
       } else {
-        // 擬似ユーザーの場合（従来の動作）
+        // 疑似ユーザーの場合（従来の動作）
         const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
         const baseId = `name:${nameArg}`;
         uid = baseId;

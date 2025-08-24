@@ -80,9 +80,22 @@ export function splitBalanced(players, lastSignature = null) {
   return best;
 }
 
-// 表示用
-export function formatTeamLines(team) {
-  return team.map((p) => `${p.username} (⭐${p.points})`).join('\n') || '-';
+// team.js の formatTeamLines 関数を修正
+function formatTeamLines(team) {
+  return team.map((user) => {
+    const points = user.points ?? 300;
+    let displayName;
+    
+    // 疑似ユーザー（name:で始まるID）の場合は、usernameをそのまま表示
+    if (user.user_id.startsWith('name:')) {
+      displayName = user.username || user.user_id.replace(/^name:/, '');
+    } else {
+      // 実際のDiscordユーザーの場合はメンション形式
+      displayName = `<@${user.user_id}>`;
+    }
+    
+    return `${displayName} (⭐${points})`;
+  }).join('\n');
 }
 
 // ランダム2分割（強さ無視）
