@@ -777,63 +777,49 @@ client.on(Events.InteractionCreate, async (interaction) => {
         uid = userArg.id;
         displayName = normalizeDisplayName(nameArg);
         
-        // ★ より厳格な重複チェック
+        // ★ 簡潔で確実な重複チェック
         const participants = listParticipants.all(gid, row.message_id);
         
-        // 1. 直接参加チェック
-        const directParticipation = participants.some(p => p.user_id === uid);
+        // 1. 直接的な重複チェック（最重要）
+        const alreadyJoined = participants.some(p => p.user_id === uid);
         
-        // 2. 名前ベース参加チェック
+        if (alreadyJoined) {
+          console.log(`join_name blocked: ${userArg.username} (${uid}) already joined directly`);
+          return interaction.reply(`<@${uid}> は既に参加済みです。（リアクション参加）`);
+        }
+        
+        // 2. 名前による疑似参加もチェック
         const member = interaction.guild?.members?.cache.get(uid);
-        let nameBasedParticipation = [];
-        
         if (member) {
-          const allPossibleNames = [
+          const usernames = [
             member.displayName,
             member.user.username,
-            member.user.globalName,
             normalizeDisplayName(member.displayName),
-            normalizeDisplayName(member.user.username),
-            normalizeDisplayName(member.user.globalName),
-            `@${member.displayName}`,
-            `@${member.user.username}`,
-            nameArg,
-            normalizeDisplayName(nameArg)
-          ].filter(Boolean).filter((name, index, arr) => arr.indexOf(name) === index);
+            normalizeDisplayName(member.user.username)
+          ].filter(Boolean);
           
-          nameBasedParticipation = participants.filter(p => {
+          const nameConflicts = participants.filter(p => {
             if (!p.user_id.startsWith('name:')) return false;
-            const nameFromId = p.user_id.replace(/^name:/, '').replace(/#\d+$/, '');
-            return allPossibleNames.includes(nameFromId);
+            const pseudoName = p.user_id.replace(/^name:/, '').replace(/#\d+$/, '');
+            return usernames.includes(pseudoName);
           });
+          
+          if (nameConflicts.length > 0) {
+            console.log(`join_name blocked: ${userArg.username} (${uid}) conflicts with name participants: ${nameConflicts.map(c => c.user_id).join(', ')}`);
+            return interaction.reply(`<@${uid}> は既に参加済みです。（name参加: ${nameConflicts.map(c => c.user_id).join(', ')}）`);
+          }
         }
         
-        if (directParticipation || nameBasedParticipation.length > 0) {
-          let message = `<@${uid}> は既に参加済みです。`;
-          const details = [];
-          
-          if (directParticipation) {
-            details.push('リアクション参加');
-          }
-          if (nameBasedParticipation.length > 0) {
-            details.push(`name参加（${nameBasedParticipation.map(p => p.user_id).join(', ')}）`);
-          }
-          
-          if (details.length > 0) {
-            message += `（${details.join(' + ')}）`;
-          }
-          
-          console.log(`join_name blocked duplicate: ${userArg.username} (${uid})`);
-          return interaction.reply(message);
-        }
+        // 重複なし → 参加処理
+        console.log(`join_name allowing: ${userArg.username} (${uid}) as "${displayName}"`);
         
-        // 既存データを統合
+        // 既存データを統合（もしあれば）
         forceConsolidateUser(gid, uid);
         
         // ユーザー登録
         ensureUserRow(gid, userArg);
         
-        // 表示名を正規化して更新
+        // 表示名を統一
         const stmt = db.prepare(`
           UPDATE users 
           SET username = ? 
@@ -842,7 +828,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         stmt.run(displayName, gid, uid);
         
       } else {
-        // 疑似ユーザーの場合
+        // 疑似ユーザーの場合（従来通り）
         const normalizedName = normalizeDisplayName(nameArg);
         const existing = listParticipants.all(gid, row.message_id).map(p => p.user_id);
         const baseId = `name:${normalizedName}`;
@@ -854,6 +840,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         displayName = normalizedName;
         
         upsertUser.run({ guild_id: gid, user_id: uid, username: displayName });
+        console.log(`join_name pseudo user: ${uid} as "${displayName}"`);
       }
 
       // ポイント設定
