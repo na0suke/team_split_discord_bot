@@ -711,7 +711,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
     const row = latestSignupMessageId.get(gid);
     if (!row || row.message_id !== message.id) return;
 
-    if (emoji === JOIN_EMOJI) {
+if (emoji === JOIN_EMOJI) {
       // シンプルで確実な重複チェック
       const participants = listParticipants.all(gid, message.id);
       const alreadyJoined = participants.some(p => p.user_id === user.id);
@@ -728,13 +728,23 @@ client.on('messageReactionAdd', async (reaction, user) => {
       
       console.log(`ALLOWING: ${user.username} (${user.id}) to join via reaction`);
       
-      ensureUserRow(gid, user);
+      // ★ 重要：表示名を確実に正規化
       const member = message.guild?.members?.cache.get(user.id) ?? 
                      await message.guild.members.fetch(user.id).catch(() => null);
-      const displayName = normalizeDisplayName(member?.displayName || user.username);
+      let displayName = member?.displayName || user.username;
+      displayName = normalizeDisplayName(displayName); // ここで@記号を除去
+      
+      console.log(`Reaction join: raw="${member?.displayName || user.username}" -> normalized="${displayName}"`);
+      
+      // 正規化された表示名でユーザー登録
+      upsertUser.run({
+        guild_id: gid,
+        user_id: user.id,
+        username: displayName  // 正規化済みの名前
+      });
       
       addParticipant.run(gid, message.id, user.id, displayName);
-      console.log(`${displayName} joined via reaction`);
+      console.log(`${displayName} joined via reaction (user_id: ${user.id})`);
       return;
     }
 
