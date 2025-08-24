@@ -38,7 +38,7 @@ import {
   updatePointsConfig,
   getPointsConfig,
 } from './db.js';
-import { splitBalanced, splitRandom, formatTeamLines } from './team.js';
+import { splitBalanced, splitRandom } from './team.js';
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
