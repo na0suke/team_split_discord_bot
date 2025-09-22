@@ -54,17 +54,27 @@ export function splitBalanced(players, lastSignature = null) {
 
   for (const c of combos(idx, sizeA)) {
     const setA = new Set(c);
-    const teamA = players.filter((_, i) => setA.has(i));
-    const teamB = players.filter((_, i) => !setA.has(i));
-    const sumA = teamA.reduce((s, p) => s + p.points, 0);
+    const candidateA = players.filter((_, i) => setA.has(i));
+    const candidateB = players.filter((_, i) => !setA.has(i));
+    const sumA = candidateA.reduce((s, p) => s + p.points, 0);
     const sumB = total - sumA;
     const diff = Math.abs(sumA - sumB);
 
-    // 直前チームとの完全一致は巨大ペナルティ、類似度(Jaccard)は係数を掛けて加点
+    // ★ 修正点: チームA/Bの決定をランダム化（偏り解消）
+    let teamA, teamB;
+    if (Math.random() < 0.5) {
+      teamA = candidateA;
+      teamB = candidateB;
+    } else {
+      teamA = candidateB;
+      teamB = candidateA;
+    }
+
     const idsA = teamA.map((p) => p.user_id);
     const idsB = teamB.map((p) => p.user_id);
     const sigNow = signatureOfTeams(idsA, idsB);
 
+    // 直前チームとの完全一致は巨大ペナルティ、類似度(Jaccard)は係数を掛けて加点
     let penalty = 0;
     if (lastSignature && sigNow === lastSignature) penalty += 100000;
     const sim = jaccardSimilarity(idsA, idsB, lastSignature);
@@ -73,37 +83,33 @@ export function splitBalanced(players, lastSignature = null) {
     const score = diff + penalty;
 
     if (!best || score < best.score) {
-      best = { teamA, teamB, diff, sumA, sumB, score, signature: sigNow };
+      best = { 
+        teamA, 
+        teamB, 
+        diff, 
+        sumA: teamA.reduce((s, p) => s + p.points, 0), 
+        sumB: teamB.reduce((s, p) => s + p.points, 0), 
+        score, 
+        signature: sigNow 
+      };
     }
   }
 
   return best;
 }
 
-// team.js の formatTeamLines 関数を修正
-function formatTeamLines(team) {
-  return team.map((user) => {
-    const points = user.points ?? 300;
-    let displayName;
-    
-    // 疑似ユーザー（name:で始まるID）の場合は、usernameをそのまま表示
-    if (user.user_id.startsWith('name:')) {
-      displayName = user.username || user.user_id.replace(/^name:/, '');
-    } else {
-      // 実際のDiscordユーザーの場合はメンション形式
-      displayName = `<@${user.user_id}>`;
-    }
-    
-    return `${displayName} (⭐${points})`;
-  }).join('\n');
-}
-
 // ランダム2分割（強さ無視）
 export function splitRandom(players) {
   const shuffled = [...players].sort(() => Math.random() - 0.5);
   const half = Math.ceil(shuffled.length / 2);
-  return {
-    teamA: shuffled.slice(0, half),
-    teamB: shuffled.slice(half),
-  };
+  
+  // ★ 修正点: チームA/Bの決定もランダム化（偏り解消）
+  const firstHalf = shuffled.slice(0, half);
+  const secondHalf = shuffled.slice(half);
+  
+  if (Math.random() < 0.5) {
+    return { teamA: firstHalf, teamB: secondHalf };
+  } else {
+    return { teamA: secondHalf, teamB: firstHalf };
+  }
 }

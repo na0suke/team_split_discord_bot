@@ -1,7 +1,24 @@
-// src/db.js
+// db.js
 import Database from 'better-sqlite3';
+import { mkdir } from 'fs/promises';
+import { dirname } from 'path';
 
-const db = new Database('./bot.db');
+// Railway Volume対応: 永続化ディレクトリを使用
+const DB_PATH = process.env.NODE_ENV === 'production' ? './data/bot.db' : './bot.db';
+
+// データディレクトリが存在しない場合は作成
+try {
+  const dbDir = dirname(DB_PATH);
+  await mkdir(dbDir, { recursive: true });
+  console.log(`Database directory ensured: ${dbDir}`);
+} catch (error) {
+  if (error.code !== 'EEXIST') {
+    console.error('Failed to create database directory:', error);
+  }
+}
+
+const db = new Database(DB_PATH);
+console.log(`Database initialized at: ${DB_PATH}`);
 
 // --- テーブル存在ヘルパー ---
 function tableExists(name) {
@@ -133,6 +150,11 @@ db.transaction(() => {
 })();
 db.exec('PRAGMA foreign_keys=ON');
 
+// WALモードでパフォーマンス向上（Railway環境で推奨）
+db.exec('PRAGMA journal_mode=WAL');
+db.exec('PRAGMA synchronous=NORMAL');
+db.exec('PRAGMA temp_store=memory');
+
 // ===== users =====
 export const upsertUser = db.prepare(`
 INSERT INTO users (guild_id, user_id, username)
@@ -228,5 +250,18 @@ export function getPointsConfig() {
     loss_streak_cap: ls ? Number(ls.value) : (s ? Number(s.value) : 3),
   };
 }
+
+// グレースフルシャットダウン
+process.on('SIGTERM', () => {
+  console.log('Closing database connection...');
+  db.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('Closing database connection...');
+  db.close();
+  process.exit(0);
+});
 
 export default db;
