@@ -1,17 +1,31 @@
 {
-  "name": "discord-team-bot",
-  "version": "2.0.0",
+  "name": "discord-bot-sqlite",
+  "version": "1.0.0",
+  "description": "Discord bot with SQLite database for team management",
   "type": "module",
+  "main": "index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "register": "node src/index.js register",
-    "register:global": "node src/index.js register-global",
-    "register:guilds": "node src/index.js guild-register"
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "register": "node index.js register",
+    "register-global": "node index.js register-global",
+    "clear-global": "node index.js clear-global",
+    "guild-register": "node index.js guild-register"
   },
   "dependencies": {
-    "better-sqlite3": "^9.4.3",
-    "discord.js": "^14.15.3",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2"
-  }
+    "better-sqlite3": "^9.2.2",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "sqlite",
+    "team-management"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
 }
