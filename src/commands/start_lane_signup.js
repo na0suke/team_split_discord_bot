@@ -15,7 +15,8 @@ module.exports = {
       );
 
     // 返信メッセージを取得して、そのメッセージIDで lane_signup を紐付け
-    const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+    await interaction.reply({ embeds: [embed] });
+    const msg = await interaction.fetchReply();
 
     // 既存の同メッセージIDの応募を初期化（再掲対策）
     db.clearLaneSignup(msg.id);
