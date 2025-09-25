@@ -135,6 +135,15 @@ const commands = [
       { name: 'user', description: '既存Discordユーザー（省略時は疑似ユーザー）', type: 6, required: false },
     ],
   },
+  { name: 'start_lane_signup', description: 'ポジション指定で参加受付（例: `/start_lane_signup`）' },
+  {
+    name: 'result_team',
+    description: 'レーン指定チームの勝敗登録（例: `/result_team winteam:1 loseteam:2`）',
+    options: [
+      { name: 'winteam', description: '勝ったチームID', type: 4, required: true },
+      { name: 'loseteam', description: '負けたチームID', type: 4, required: true },
+    ],
+  },
   { name: 'help', description: 'コマンド一覧を表示' },
 ];
 
@@ -612,6 +621,55 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply(`**${displayName}**${userMention} を参加者に追加しました${pointsArg!=null?`（⭐${pointsArg}）`:''}。`);
     }
 
+    // --- レーン募集開始 ---
+    if (name === 'start_lane_signup') {
+      const embed = new EmbedBuilder()
+        .setTitle('ポジション募集')
+        .setDescription('⚔️ TOP / 🌲 JG / 🪄 MID / 🏹 ADC / ❤️ SUP\n✅でチーム分けを実行');
+      const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+      for (const e of ['⚔️','🌲','🪄','🏹','❤️','✅']) {
+        await msg.react(e);
+      }
+      return;
+    }
+
+    // --- レーン結果登録 ---
+    if (name === 'result_team') {
+      const winId  = interaction.options.getInteger('winteam');
+      const loseId = interaction.options.getInteger('loseteam');
+      const winners = getLaneTeamMembers.all(winId, gid);
+      const losers  = getLaneTeamMembers.all(loseId, gid);
+      if (!winners.length || !losers.length) {
+        return interaction.reply('指定したチームが見つかりません。');
+      }
+
+      const logs = [];
+      for (const p of winners) {
+        const before = getUser.get(gid, p.user_id)?.points ?? 300;
+        const wsBefore = getStreak.get(gid, p.user_id)?.win_streak ?? 0;
+        const bonus = (wsBefore >= 1) ? (wsBefore * 2) : 0;
+        const delta = 6 + bonus;
+        addWinLoss.run(1, 0, delta, gid, p.user_id);
+        incStreak.run(99, gid, p.user_id);
+        resetLossStreak.run(gid, p.user_id);
+        const after = before + delta;
+        logs.push(`<@${p.user_id}> +${delta} (${before} → ${after})`);
+      }
+      for (const p of losers) {
+        const before = getUser.get(gid, p.user_id)?.points ?? 300;
+        const lsBefore = getLossStreak.get(gid, p.user_id)?.loss_streak ?? 0;
+        const penalty = (lsBefore >= 1) ? (lsBefore * 2) : 0;
+        const delta = -4 - penalty;
+        addWinLoss.run(0, 1, delta, gid, p.user_id);
+        incLossStreak.run(99, gid, p.user_id);
+        resetStreak.run(gid, p.user_id);
+        const after = before + delta;
+        logs.push(`<@${p.user_id}> ${delta} (${before} → ${after})`);
+      }
+      return interaction.reply(['試合結果を登録しました。', ...logs].join('\n'));
+    }
+
+
   } catch (e) {
     console.error(e);
     await sendFinal(interaction, '内部エラーが発生しました。ログを確認してください。');
@@ -820,6 +878,41 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
     removeParticipant.run(gid, message.id, user.id);
   } catch (e) {
     console.error('ReactionRemove error', e);
+  }
+});
+
+// ===== レーン募集用リアクション処理 =====
+const laneRoleMap = {
+  '⚔️': 'TOP',
+  '🌲': 'JG',
+  '🪄': 'MID',
+  '🏹': 'ADC',
+  '❤️': 'SUP',
+};
+
+client.on('messageReactionAdd', async (reaction, user) => {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+
+    const gid = reaction.message.guildId;
+    const emoji = reaction.emoji.name;
+
+    // レーン参加
+    if (laneRoleMap[emoji]) {
+      // lane_signup テーブルがあればここで参加登録
+      // 仮: DB保存は省略例
+      console.log(`${user.username} joined as ${laneRoleMap[emoji]}`);
+      return;
+    }
+
+    // ✅ が押されたらチーム分け
+    if (emoji === '✅') {
+      // lane_signup から参加者を取得してチーム分けする処理を書く
+      console.log('Lane team split triggered');
+    }
+  } catch (e) {
+    console.error('[laneReactionAdd]', e);
   }
 });
 

@@ -251,6 +251,28 @@ export function getPointsConfig() {
   };
 }
 
+// === lane_matches (レーン指定チーム用) ===
+db.exec(`
+CREATE TABLE IF NOT EXISTS lane_matches (
+  team_id    INTEGER,
+  guild_id   TEXT,
+  user_id    TEXT,
+  username   TEXT,
+  role       TEXT,
+  strength   INTEGER,
+  PRIMARY KEY (team_id, guild_id, user_id)
+);
+`);
+
+export const getNextLaneTeamId = db.prepare(`SELECT COALESCE(MAX(team_id), 0) + 1 AS next FROM lane_matches`);
+export const saveLaneTeam = db.prepare(`
+INSERT INTO lane_matches (team_id, guild_id, user_id, username, role, strength)
+VALUES (@team_id, @guild_id, @user_id, @username, @role, @strength)
+ON CONFLICT(team_id, guild_id, user_id) DO UPDATE
+  SET username=excluded.username, role=excluded.role, strength=excluded.strength
+`);
+export const getLaneTeamMembers = db.prepare(`SELECT * FROM lane_matches WHERE team_id=? AND guild_id=?`);
+
 // グレースフルシャットダウン
 process.on('SIGTERM', () => {
   console.log('Closing database connection...');
