@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "description": "Discord bot with SQLite database for team management",
   "type": "module",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js",
-    "register": "node index.js register",
-    "register-global": "node index.js register-global",
-    "clear-global": "node index.js clear-global",
-    "guild-register": "node index.js guild-register"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "register": "node src/index.js register",
+    "register-global": "node src/index.js register-global",
+    "clear-global": "node src/index.js clear-global",
+    "guild-register": "node src/index.js guild-register"
   },
   "dependencies": {
     "better-sqlite3": "^9.2.2",
