@@ -626,7 +626,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const embed = new EmbedBuilder()
         .setTitle('ポジション募集')
         .setDescription('⚔️ TOP / 🌲 JG / 🪄 MID / 🏹 ADC / ❤️ SUP\n✅でチーム分けを実行');
-      const msg = await interaction.reply({ embeds: [embed], fetchReply: true });
+      await interaction.reply({ embeds: [embed] });
+      const msg = await interaction.fetchReply();
       for (const e of ['⚔️','🌲','🪄','🏹','❤️','✅']) {
         await msg.react(e);
       }
