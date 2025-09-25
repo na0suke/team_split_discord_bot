@@ -221,3 +221,5 @@ npm run register 済みか／グローバルは反映待ちか／Guild ID が正
 起動時に Cannot find module '/app/index.js'
 
 ルート／Start コマンドのパスを確認（例：node src/index.js）
+
+おわり
