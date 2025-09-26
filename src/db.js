@@ -216,6 +216,19 @@ ON CONFLICT(guild_id, user_id) DO UPDATE SET
   loss_streak = 0
 `);
 
+// === lane_signup（一時参加：メッセージ単位で管理） ===
+db.exec(`
+CREATE TABLE IF NOT EXISTS lane_signup (
+  message_id TEXT,
+  guild_id   TEXT,
+  user_id    TEXT,
+  username   TEXT,
+  role       TEXT,
+  strength   INTEGER,
+  PRIMARY KEY (message_id, guild_id, user_id)
+);
+`);
+
 // ===== signup =====
 export const createSignup           = db.prepare(`INSERT INTO signup (guild_id, message_id, channel_id, author_id, created_at) VALUES (?, ?, ?, ?, ?)`);
 export const latestSignupMessageId  = db.prepare(`SELECT message_id FROM signup WHERE guild_id=? ORDER BY created_at DESC LIMIT 1`);
@@ -279,18 +292,7 @@ export function getPointsConfig() {
    ここから追加分（既存を壊さない）
    ========================= */
 
-// === lane_signup（一時参加：メッセージ単位で管理） ===
-db.exec(`
-CREATE TABLE IF NOT EXISTS lane_signup (
-  message_id TEXT,
-  guild_id   TEXT,
-  user_id    TEXT,
-  username   TEXT,
-  role       TEXT,
-  strength   INTEGER,
-  PRIMARY KEY (message_id, guild_id, user_id)
-);
-`);
+
 
 export const clearLaneSignup = db.prepare(
   `DELETE FROM lane_signup WHERE message_id=? AND guild_id=?`
