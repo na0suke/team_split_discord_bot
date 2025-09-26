@@ -289,9 +289,17 @@ export const removeLaneParticipant = db.prepare(
   `DELETE FROM lane_signup WHERE message_id=? AND guild_id=? AND user_id=?`
 );
 export const getLaneParticipantsByMessage = db.prepare(
-  `SELECT user_id as userId, username, role,
-          COALESCE((SELECT points FROM users WHERE guild_id=? AND user_id=userId), 300) as strength
-   FROM lane_signup WHERE message_id=? AND guild_id=?`
+  `SELECT
+     ls.user_id  AS userId,
+     ls.username AS username,
+     ls.role     AS role,
+     COALESCE(u.points, 300) AS strength
+   FROM lane_signup ls
+   LEFT JOIN users u
+     ON u.guild_id = ?
+    AND u.user_id  = ls.user_id
+   WHERE ls.message_id = ?
+     AND ls.guild_id  = ?`
 );
 
 // === lane_matches ===
