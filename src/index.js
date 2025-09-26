@@ -728,6 +728,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const logs = [];
+      const winLines  = [];
+      const loseLines = [];
+      const icon = (r) =>
+        r === 'TOP' ? '⚔️' :
+        r === 'JG'  ? '🌲' :
+        r === 'MID' ? '🪄' :
+        r === 'ADC' ? '🏹' :
+        r === 'SUP' ? '❤️' : '•';
+
       for (const p of winners) {
         const before = getUser.get(gid, p.user_id)?.points ?? 300;
         const wsBefore = getStreak.get(gid, p.user_id)?.win_streak ?? 0;
@@ -738,6 +747,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         resetLossStreak.run(gid, p.user_id);
         const after = before + delta;
         logs.push(`<@${p.user_id}> +${delta} (${before} → ${after})`);
+        winLines.push(`${icon(p.role)} ${p.username} <@${p.user_id}> **+${delta}**（⭐${before} → ⭐${after}）`);
       }
       for (const p of losers) {
         const before = getUser.get(gid, p.user_id)?.points ?? 300;
@@ -749,8 +759,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         resetStreak.run(gid, p.user_id);
         const after = before + delta;
         logs.push(`<@${p.user_id}> ${delta} (${before} → ${after})`);
+        loseLines.push(`${icon(p.role)} ${p.username} <@${p.user_id}> **${delta}**（⭐${before} → ⭐${after}）`);
       }
-      return interaction.reply(['試合結果を登録しました。', ...logs].join('\n'));
+        // 見やすいEmbedで勝ち/負けを分けて表示（ログは残したいなら下でフッターに一部要約 or チャンネルに別送でもOK）
+      const embed = new EmbedBuilder()
+        .setTitle('レーン試合 勝敗登録')
+        .setColor(0x2ecc71)
+        .addFields(
+          { name: `🏆 勝ち: チーム #${winId}`,  value: winLines.join('\n')  || '（なし）' },
+          { name: `💤 負け: チーム #${loseId}`, value: loseLines.join('\n') || '（なし）' },
+        )
+        .setFooter({ text: '勝ち:+6 / 負け:-4。連勝ボーナス・連敗ペナルティは直前streakに応じて適用されます。' });
+      await interaction.reply({ embeds: [embed] });
+      // もし旧テキストログも残したければ、次行を有効化（別メッセージで投稿）
+      // await interaction.followUp(['詳細ログ', ...logs].join('\n'));
+      return;
     }
 
 
