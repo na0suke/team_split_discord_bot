@@ -162,6 +162,19 @@ VALUES (@guild_id, @user_id, @username)
 ON CONFLICT(guild_id, user_id) DO UPDATE SET username=excluded.username
 `);
 
+// --- ユーザー削除（戦績ごと完全削除） ---
+export const deleteUserRecord = db.prepare(
+  `DELETE FROM users WHERE guild_id=? AND user_id=?`
+);
+
+export const deleteFromSignupParticipants = db.prepare(
+  `DELETE FROM signup_participants WHERE guild_id=? AND user_id=?`
+);
+
+export const deleteFromLaneSignup = db.prepare(
+  `DELETE FROM lane_signup WHERE guild_id=? AND user_id=?`
+);
+
 export const getUser      = db.prepare(`SELECT * FROM users WHERE guild_id=? AND user_id=?`);
 export const setStrength  = db.prepare(`
 INSERT INTO users (guild_id, user_id, username, points)
@@ -190,6 +203,17 @@ FROM users
 WHERE guild_id=?
 ORDER BY points DESC, winrate DESC, wins DESC
 LIMIT 50
+`);
+
+// --- 追加: 戦績（wins/losses）を直接上書きし、ストリークはリセット ---
+export const setUserRecord = db.prepare(`
+INSERT INTO users (guild_id, user_id, username, points, wins, losses, win_streak, loss_streak)
+VALUES (?, ?, ?, 300, ?, ?, 0, 0)
+ON CONFLICT(guild_id, user_id) DO UPDATE SET
+  wins = excluded.wins,
+  losses = excluded.losses,
+  win_streak = 0,
+  loss_streak = 0
 `);
 
 // ===== signup =====
@@ -251,6 +275,43 @@ export function getPointsConfig() {
   };
 }
 
+/* =========================
+   ここから追加分（既存を壊さない）
+   ========================= */
+
+// === lane_signup（一時参加：メッセージ単位で管理） ===
+db.exec(`
+CREATE TABLE IF NOT EXISTS lane_signup (
+  message_id TEXT,
+  guild_id   TEXT,
+  user_id    TEXT,
+  username   TEXT,
+  role       TEXT,
+  strength   INTEGER,
+  PRIMARY KEY (message_id, guild_id, user_id)
+);
+`);
+
+export const clearLaneSignup = db.prepare(
+  `DELETE FROM lane_signup WHERE message_id=? AND guild_id=?`
+);
+export const upsertLaneParticipant = db.prepare(`
+INSERT INTO lane_signup (message_id, guild_id, user_id, username, role, strength)
+VALUES (@message_id, @guild_id, @user_id, @username, @role,
+        COALESCE((SELECT points FROM users WHERE guild_id=@guild_id AND user_id=@user_id), 300))
+ON CONFLICT(message_id, guild_id, user_id) DO UPDATE SET
+  username=excluded.username,
+  role=excluded.role
+`);
+export const removeLaneParticipant = db.prepare(
+  `DELETE FROM lane_signup WHERE message_id=? AND guild_id=? AND user_id=?`
+);
+export const getLaneParticipantsByMessage = db.prepare(
+  `SELECT user_id as userId, username, role,
+          COALESCE((SELECT points FROM users WHERE guild_id=? AND user_id=userId), 300) as strength
+   FROM lane_signup WHERE message_id=? AND guild_id=?`
+);
+
 // === lane_matches (レーン指定チーム用) ===
 db.exec(`
 CREATE TABLE IF NOT EXISTS lane_matches (
@@ -272,6 +333,11 @@ ON CONFLICT(team_id, guild_id, user_id) DO UPDATE
   SET username=excluded.username, role=excluded.role, strength=excluded.strength
 `);
 export const getLaneTeamMembers = db.prepare(`SELECT * FROM lane_matches WHERE team_id=? AND guild_id=?`);
+
+// ギルドごとの連番払い出しが必要な場合の補助（新規追加・既存と別名）
+export const getNextLaneTeamIdForGuild = db.prepare(
+  `SELECT COALESCE(MAX(team_id), 0) + 1 AS next FROM lane_matches WHERE guild_id=?`
+);
 
 // グレースフルシャットダウン
 process.on('SIGTERM', () => {

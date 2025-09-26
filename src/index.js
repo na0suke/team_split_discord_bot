@@ -37,8 +37,14 @@ import {
   getLastSignature,
   updatePointsConfig,
   getPointsConfig,
+  clearLaneSignup,
+  upsertLaneParticipant,
+  removeLaneParticipant,
+  getLaneParticipantsByMessage,
+  getLaneTeamMembers
 } from './db.js';
 import { splitBalanced, splitRandom } from './team.js';
+import { assignLaneTeams, formatLaneTeamsEmbed } from './team_lane.js';
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -53,6 +59,8 @@ const GUILD_IDS = (process.env.GUILD_IDS ?? process.env.GUILD_ID ?? '')
 const JOIN_EMOJI = '✋';
 const OK_EMOJI = '✅';
 const DICE_EMOJI = '🎲';
+// レーン募集メッセージ（/start_lane_signupで作ったもの）だけを対象化するためのセット
+const laneSignupMessages = new Set();
 
 const client = new Client({
   intents: [
@@ -126,6 +134,26 @@ const commands = [
   },
   { name: 'show_points', description: '現在のポイント設定を表示（例: `/show_points`）' },
   { name: 'rank', description: 'ランキング表示（例: `/rank`）' },
+  {
+    name: 'record',
+    description: '指定ユーザーの戦績（wins/losses）を上書きします（管理者用）',
+    default_member_permissions: '0x20', // Manage Guild
+    dm_permission: false,
+    options: [
+      { name: 'user',   description: '対象ユーザー', type: 6, required: true },
+      { name: 'wins',   description: '勝利数',       type: 4, required: true, min_value: 0 },
+      { name: 'losses', description: '敗北数',       type: 4, required: true, min_value: 0 }
+    ]
+  },
+  {
+    name: 'delete_user',
+    description: '指定ユーザーの戦績を完全削除（管理者用）',
+    default_member_permissions: '0x20',
+    dm_permission: false,
+    options: [
+      { name: 'user', description: '削除する対象ユーザー', type: 6, required: true }
+    ]
+  },
   {
     name: 'join_name',
     description: 'ユーザー名だけで参加者に追加（例: `/join_name name:たろう points:320`）',
@@ -322,6 +350,52 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const name = interaction.commandName;
 
   try {
+    // --- ユーザー削除 ---
+    if (name === 'delete_user') {
+      const userOpt = interaction.options.getUser('user', true);
+
+      // 実行権限チェック（任意、管理者のみ）
+      if (!interaction.memberPermissions?.has('ManageGuild')) {
+        return interaction.reply({ content: '権限がありません。', ephemeral: true });
+      }
+
+      deleteUserRecord.run(gid, userOpt.id);
+      deleteFromSignupParticipants.run(gid, userOpt.id);
+      deleteFromLaneSignup.run(gid, userOpt.id);
+
+      return interaction.reply(`🗑️ <@${userOpt.id}> の戦績を削除しました。`);
+    }
+
+    // --- 戦績を直接編集（wins/losses 上書き、ストリーク0） ---
+    if (name === 'record') {
+      const userOpt = interaction.options.getUser('user', true);
+      const wins    = interaction.options.getInteger('wins', true);
+      const losses  = interaction.options.getInteger('losses', true);
+
+      if (wins < 0 || losses < 0) {
+        return interaction.reply({ content: 'wins と losses は 0 以上で指定してください。', ephemeral: true });
+      }
+
+      // 管理者判定
+      const isAdmin = interaction.memberPermissions?.has('ManageGuild');
+      if (!isAdmin && interaction.user.id !== userOpt.id) {
+        return interaction.reply({ content: '他人の戦績は編集できません。', ephemeral: true });
+      }
+
+      // 既存の表示名を尊重（DBにあればそれ、無ければ現在のDiscord名）
+      const current  = getUser.get(gid, userOpt.id);
+      const username = current?.username ?? userOpt.username;
+
+      setUserRecord.run(gid, userOpt.id, username, wins, losses);
+      const after = getUser.get(gid, userOpt.id);
+
+      return interaction.reply(
+        `✅ <@${userOpt.id}> の戦績を更新しました。\n` +
+        `Wins: **${after.wins}** / Losses: **${after.losses}** / Points: **${after.points}**\n` +
+        `（win_streak / loss_streak は 0 にリセット、ポイントは変更していません）`
+      );
+    }
+
     // --- /start_signup ---
     if (name === 'start_signup') {
       const acked = await tryDefer(interaction);
@@ -625,12 +699,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (name === 'start_lane_signup') {
       const embed = new EmbedBuilder()
         .setTitle('ポジション募集')
-        .setDescription('⚔️ TOP / 🌲 JG / 🪄 MID / 🏹 ADC / ❤️ SUP\n✅でチーム分けを実行');
+      //   .setDescription('⚔️ TOP / 🌲 JG / 🪄 MID / 🏹 ADC / ❤️ SUP\n✅でチーム分けを実行');
+      // await interaction.reply({ embeds: [embed] });
+      // const msg = await interaction.fetchReply();
+      // for (const e of ['⚔️','🌲','🪄','🏹','❤️','✅']) {
+      //   await msg.react(e);
+      // }
+      .setDescription('⚔️ TOP / 🌲 JG / 🪄 MID / 🏹 ADC / ❤️ SUP\n✅でチーム分けを実行');
       await interaction.reply({ embeds: [embed] });
       const msg = await interaction.fetchReply();
-      for (const e of ['⚔️','🌲','🪄','🏹','❤️','✅']) {
-        await msg.react(e);
-      }
+      laneSignupMessages.add(msg.id);                   // この募集のみ対象化
+      clearLaneSignup.run(msg.id, interaction.guildId); // 同メッセージの旧登録をクリア
+      for (const e of ['⚔️','🌲','🪄','🏹','❤️','✅']) await msg.react(e);
       return;
     }
 
@@ -882,6 +962,21 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
   }
 });
 
+// レーン募集のリアクション解除 → そのレーン参加を取り消し
+client.on(Events.MessageReactionRemove, async (reaction, user) => {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+    const msg = reaction.message;
+    if (!laneSignupMessages.has(msg.id)) return;
+    const role = laneRoleMap[reaction.emoji.name];
+    if (!role) return;
+    removeLaneParticipant.run(msg.id, msg.guildId, user.id);
+  } catch (e) {
+    console.error('[laneReactionRemove]', e);
+  }
+});
+
 // ===== レーン募集用リアクション処理 =====
 const laneRoleMap = {
   '⚔️': 'TOP',
@@ -896,21 +991,47 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (user.bot) return;
     if (reaction.partial) await reaction.fetch();
 
-    const gid = reaction.message.guildId;
+    const msg  = reaction.message;
+    const gid  = msg.guildId;
     const emoji = reaction.emoji.name;
 
-    // レーン参加
+    // /start_lane_signup で作られた募集メッセージ以外は無視（他の✅と干渉しない）
+    if (!laneSignupMessages.has(msg.id)) return;
+
+    // レーン参加（role を登録/更新）
     if (laneRoleMap[emoji]) {
-      // lane_signup テーブルがあればここで参加登録
-      // 仮: DB保存は省略例
+      upsertLaneParticipant.run({
+        message_id: msg.id,
+        guild_id: gid,
+        user_id: user.id,
+        username: user.username,
+        role: laneRoleMap[emoji],
+      });
       console.log(`${user.username} joined as ${laneRoleMap[emoji]}`);
       return;
     }
 
     // ✅ が押されたらチーム分け
     if (emoji === '✅') {
-      // lane_signup から参加者を取得してチーム分けする処理を書く
+      // Bot が自動で付けた ✅ は無視
+      if (user.id === reaction.client.user.id) return;
       console.log('Lane team split triggered');
+
+      // この募集に登録された参加者だけ取得 → チーム分け
+      const participants = getLaneParticipantsByMessage.all(gid, msg.id, gid);
+      if (!participants.length) {
+        await msg.channel.send('この募集に登録された参加者がいません。');
+        return;
+      }
+      const teams = assignLaneTeams(participants, gid);
+      if (!teams.length) {
+        await msg.channel.send('各レーンが揃っていないため、チームを作成できません。');
+        return;
+      }
+      const embed = formatLaneTeamsEmbed(teams, EmbedBuilder);
+      await msg.channel.send({ embeds: [embed] });
+      // 多重実行を防ぐため、この募集は終了扱い
+      laneSignupMessages.delete(msg.id);
     }
   } catch (e) {
     console.error('[laneReactionAdd]', e);
