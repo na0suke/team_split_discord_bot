@@ -1003,14 +1003,22 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
     // レーン参加（role を登録/更新）
     if (laneRoleMap[emoji]) {
+      
+    // サーバー表示名（ニックネーム優先）を取得
+      let displayName = user.username;
+      try {
+        const member = await msg.guild.members.fetch(user.id);
+        displayName = member?.displayName ?? user.globalName ?? user.username;
+      } catch { /* 取得失敗時は従来どおり username を使用 */ }
+
       upsertLaneParticipant.run({
         message_id: msg.id,
         guild_id: gid,
         user_id: user.id,
-        username: user.username,
+        username: displayName,
         role: laneRoleMap[emoji],
       });
-      console.log(`${user.username} joined as ${laneRoleMap[emoji]}`);
+      console.log(`${displayName} joined as ${laneRoleMap[emoji]}`);
       return;
     }
 
@@ -1021,7 +1029,16 @@ client.on('messageReactionAdd', async (reaction, user) => {
       console.log('Lane team split triggered');
 
       // この募集に登録された参加者だけ取得 → チーム分け
-      const participants = getLaneParticipantsByMessage.all(gid, msg.id, gid);
+      let participants = getLaneParticipantsByMessage.all(gid, msg.id, gid);
+      // 表示名を最新に補正（取得失敗時はDBの名前のまま）
+      try {
+        const ids = [...new Set(participants.map(p => p.userId))];
+        const fetched = await msg.guild.members.fetch({ user: ids, withPresences: false });
+        participants = participants.map(p => {
+          const m = fetched.get(p.userId);
+          return m ? { ...p, username: m.displayName ?? p.username } : p;
+        });
+      } catch { /* 権限やIntentが無い場合はスキップ */ }
       if (!participants.length) {
         await msg.channel.send('この募集に登録された参加者がいません。');
         return;
