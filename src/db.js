@@ -1,4 +1,3 @@
-// db.js
 import Database from 'better-sqlite3';
 import { mkdir } from 'fs/promises';
 import { dirname } from 'path';
@@ -26,7 +25,7 @@ function tableExists(name) {
   return !!r;
 }
 
-// --- users の現状把握（ギルド列の有無） ---
+// --- users の現状把握（guild_id 列の有無） ---
 function usersHasGuildId() {
   if (!tableExists('users')) return false;
   const cols = db.prepare(`PRAGMA table_info(users)`).all();
@@ -34,12 +33,9 @@ function usersHasGuildId() {
 }
 
 // === マイグレーション ===
-// 1) users が無ければ、ギルド対応の新スキーマを直接作成
-// 2) users があるが guild_id が無ければ、users_new を作ってコピー → users を入替
 db.exec('PRAGMA foreign_keys=OFF');
 db.transaction(() => {
   if (!tableExists('users')) {
-    // 新規作成（ギルド対応 + loss_streak 追加）
     db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         guild_id     TEXT NOT NULL,
@@ -54,7 +50,6 @@ db.transaction(() => {
       );
     `);
   } else if (!usersHasGuildId()) {
-    // 旧 users → 新 users へ移行
     const oldRows = (() => {
       try { return db.prepare(`SELECT * FROM users`).all(); }
       catch { return []; }
@@ -92,7 +87,6 @@ db.transaction(() => {
       });
     }
 
-    // 旧表を置き換え（users が存在する時だけ実行）
     db.exec(`
       ALTER TABLE users RENAME TO users_old;
       ALTER TABLE users_new RENAME TO users;
@@ -100,7 +94,6 @@ db.transaction(() => {
     `);
   }
 
-  // 他テーブル（ギルド対応で作成）
   db.exec(`
     CREATE TABLE IF NOT EXISTS signup (
       guild_id   TEXT,
@@ -139,18 +132,16 @@ db.transaction(() => {
     );
   `);
 
-  // 既存の旧スキーマに列が無ければ追加（あっても無視）
   try { db.exec(`ALTER TABLE signup ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE signup_participants ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE matches ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE last_team_signature ADD COLUMN guild_id TEXT`); } catch {}
-  // streak 列の後方互換
   try { db.exec(`ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE users ADD COLUMN loss_streak INTEGER DEFAULT 0`); } catch {}
 })();
 db.exec('PRAGMA foreign_keys=ON');
 
-// WALモードでパフォーマンス向上（Railway環境で推奨）
+// WALモードでパフォーマンス向上
 db.exec('PRAGMA journal_mode=WAL');
 db.exec('PRAGMA synchronous=NORMAL');
 db.exec('PRAGMA temp_store=memory');
@@ -161,20 +152,6 @@ INSERT INTO users (guild_id, user_id, username)
 VALUES (@guild_id, @user_id, @username)
 ON CONFLICT(guild_id, user_id) DO UPDATE SET username=excluded.username
 `);
-
-// --- ユーザー削除（戦績ごと完全削除） ---
-export const deleteUserRecord = db.prepare(
-  `DELETE FROM users WHERE guild_id=? AND user_id=?`
-);
-
-export const deleteFromSignupParticipants = db.prepare(
-  `DELETE FROM signup_participants WHERE guild_id=? AND user_id=?`
-);
-
-export const deleteFromLaneSignup = db.prepare(
-  `DELETE FROM lane_signup WHERE guild_id=? AND user_id=?`
-);
-
 export const getUser      = db.prepare(`SELECT * FROM users WHERE guild_id=? AND user_id=?`);
 export const setStrength  = db.prepare(`
 INSERT INTO users (guild_id, user_id, username, points)
@@ -205,7 +182,7 @@ ORDER BY points DESC, winrate DESC, wins DESC
 LIMIT 50
 `);
 
-// --- 追加: 戦績（wins/losses）を直接上書きし、ストリークはリセット ---
+// --- 戦績編集・削除用 ---
 export const setUserRecord = db.prepare(`
 INSERT INTO users (guild_id, user_id, username, points, wins, losses, win_streak, loss_streak)
 VALUES (?, ?, ?, 300, ?, ?, 0, 0)
@@ -215,19 +192,15 @@ ON CONFLICT(guild_id, user_id) DO UPDATE SET
   win_streak = 0,
   loss_streak = 0
 `);
-
-// === lane_signup（一時参加：メッセージ単位で管理） ===
-db.exec(`
-CREATE TABLE IF NOT EXISTS lane_signup (
-  message_id TEXT,
-  guild_id   TEXT,
-  user_id    TEXT,
-  username   TEXT,
-  role       TEXT,
-  strength   INTEGER,
-  PRIMARY KEY (message_id, guild_id, user_id)
+export const deleteUserRecord = db.prepare(
+  `DELETE FROM users WHERE guild_id=? AND user_id=?`
 );
-`);
+export const deleteFromSignupParticipants = db.prepare(
+  `DELETE FROM signup_participants WHERE guild_id=? AND user_id=?`
+);
+export const deleteFromLaneSignup = db.prepare(
+  `DELETE FROM lane_signup WHERE guild_id=? AND user_id=?`
+);
 
 // ===== signup =====
 export const createSignup           = db.prepare(`INSERT INTO signup (guild_id, message_id, channel_id, author_id, created_at) VALUES (?, ?, ?, ?, ?)`);
@@ -288,12 +261,18 @@ export function getPointsConfig() {
   };
 }
 
-/* =========================
-   ここから追加分（既存を壊さない）
-   ========================= */
-
-
-
+// === lane_signup === （テーブル先に作成 → prepare 順序修正済み）
+db.exec(`
+CREATE TABLE IF NOT EXISTS lane_signup (
+  message_id TEXT,
+  guild_id   TEXT,
+  user_id    TEXT,
+  username   TEXT,
+  role       TEXT,
+  strength   INTEGER,
+  PRIMARY KEY (message_id, guild_id, user_id)
+);
+`);
 export const clearLaneSignup = db.prepare(
   `DELETE FROM lane_signup WHERE message_id=? AND guild_id=?`
 );
@@ -314,7 +293,7 @@ export const getLaneParticipantsByMessage = db.prepare(
    FROM lane_signup WHERE message_id=? AND guild_id=?`
 );
 
-// === lane_matches (レーン指定チーム用) ===
+// === lane_matches ===
 db.exec(`
 CREATE TABLE IF NOT EXISTS lane_matches (
   team_id    INTEGER,
@@ -326,7 +305,6 @@ CREATE TABLE IF NOT EXISTS lane_matches (
   PRIMARY KEY (team_id, guild_id, user_id)
 );
 `);
-
 export const getNextLaneTeamId = db.prepare(`SELECT COALESCE(MAX(team_id), 0) + 1 AS next FROM lane_matches`);
 export const saveLaneTeam = db.prepare(`
 INSERT INTO lane_matches (team_id, guild_id, user_id, username, role, strength)
@@ -335,8 +313,6 @@ ON CONFLICT(team_id, guild_id, user_id) DO UPDATE
   SET username=excluded.username, role=excluded.role, strength=excluded.strength
 `);
 export const getLaneTeamMembers = db.prepare(`SELECT * FROM lane_matches WHERE team_id=? AND guild_id=?`);
-
-// ギルドごとの連番払い出しが必要な場合の補助（新規追加・既存と別名）
 export const getNextLaneTeamIdForGuild = db.prepare(
   `SELECT COALESCE(MAX(team_id), 0) + 1 AS next FROM lane_matches WHERE guild_id=?`
 );
@@ -347,7 +323,6 @@ process.on('SIGTERM', () => {
   db.close();
   process.exit(0);
 });
-
 process.on('SIGINT', () => {
   console.log('Closing database connection...');
   db.close();
