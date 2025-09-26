@@ -198,9 +198,6 @@ export const deleteUserRecord = db.prepare(
 export const deleteFromSignupParticipants = db.prepare(
   `DELETE FROM signup_participants WHERE guild_id=? AND user_id=?`
 );
-export const deleteFromLaneSignup = db.prepare(
-  `DELETE FROM lane_signup WHERE guild_id=? AND user_id=?`
-);
 
 // ===== signup =====
 export const createSignup           = db.prepare(`INSERT INTO signup (guild_id, message_id, channel_id, author_id, created_at) VALUES (?, ?, ?, ?, ?)`);
@@ -273,6 +270,10 @@ CREATE TABLE IF NOT EXISTS lane_signup (
   PRIMARY KEY (message_id, guild_id, user_id)
 );
 `);
+// ← テーブル作成後に prepare する！（順序が重要）
+export const deleteFromLaneSignup = db.prepare(
+  `DELETE FROM lane_signup WHERE guild_id=? AND user_id=?`
+);
 export const clearLaneSignup = db.prepare(
   `DELETE FROM lane_signup WHERE message_id=? AND guild_id=?`
 );
