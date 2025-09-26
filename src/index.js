@@ -137,7 +137,6 @@ const commands = [
   {
     name: 'record',
     description: '指定ユーザーの戦績（wins/losses）を上書きします（管理者用）',
-    default_member_permissions: '0x20', // Manage Guild
     dm_permission: false,
     options: [
       { name: 'user',   description: '対象ユーザー', type: 6, required: true },
@@ -148,7 +147,7 @@ const commands = [
   {
     name: 'delete_user',
     description: '指定ユーザーの戦績を完全削除（管理者用）',
-    default_member_permissions: '0x20',
+    default_member_permissions: "32",
     dm_permission: false,
     options: [
       { name: 'user', description: '削除する対象ユーザー', type: 6, required: true }
