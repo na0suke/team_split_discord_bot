@@ -175,6 +175,13 @@ const commands = [
       { name: 'loseteam', description: '負けたチームID', type: 4, required: true },
     ],
   },
+  {
+    name: 'show_lane_history',
+    description: '過去のレーンチーム分け結果を表示（当時→現在）（例: `/show_lane_history count:5`）',
+    options: [
+      { name: 'count', description: '表示するチーム数（デフォルト: 5）', type: 4, required: false, min_value: 1, max_value: 50 }
+    ]
+  },
   { name: 'help', description: 'コマンド一覧を表示' },
 ];
 
@@ -1091,6 +1098,115 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setColor(0x00AE86)
         .setDescription(commands.map(c => `**/${c.name}** — ${c.description}`).join('\n'));
       return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+  }
+});
+
+// show_lane_history コマンドハンドラ（両方表示版）
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  
+  const { commandName, guildId } = interaction;
+  
+  if (commandName === 'show_lane_history') {
+    try {
+      const count = interaction.options.getInteger('count') || 5;
+      
+      // チームIDのリストを取得
+      const teamIds = getLaneTeamHistory.all(guildId, count);
+      
+      if (!teamIds.length) {
+        const embed = new EmbedBuilder()
+          .setTitle('レーンチーム履歴')
+          .setDescription('チーム分けの履歴がありません。')
+          .setColor(0xff0000);
+        return interaction.reply({ embeds: [embed] });
+      }
+      
+      // 各チームのメンバー情報を取得
+      const teams = [];
+      for (const { team_id } of teamIds) {
+        const members = getLaneTeamMembers.all(team_id, guildId);
+        
+        // ロール順にソート & 現在のポイントを取得
+        members.sort((a, b) => {
+          const roleOrder = { TOP: 1, JG: 2, MID: 3, ADC: 4, SUP: 5 };
+          return (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99);
+        });
+        
+        // 各メンバーの現在のポイントを取得
+        const enrichedMembers = members.map(m => {
+          const currentUser = getUser.get(guildId, m.user_id);
+          return {
+            ...m,
+            currentStrength: currentUser?.points ?? m.strength, // 現在のポイント（取得できない場合は当時のポイント）
+            originalStrength: m.strength // 当時のポイント
+          };
+        });
+        
+        const totalOriginal = enrichedMembers.reduce((sum, m) => sum + m.originalStrength, 0);
+        const totalCurrent = enrichedMembers.reduce((sum, m) => sum + m.currentStrength, 0);
+        
+        teams.push({
+          teamId: team_id,
+          members: enrichedMembers,
+          totalOriginal,
+          totalCurrent
+        });
+      }
+      
+      // Embedを作成
+      const embed = new EmbedBuilder()
+        .setTitle(`レーンチーム履歴（最新${teams.length}件）`)
+        .setDescription('表示形式: 当時のポイント → 現在のポイント')
+        .setColor(0x00ae86);
+      
+      const roleEmoji = {
+        'TOP': '⚔️',
+        'JG': '🌲',
+        'MID': '🪄',
+        'ADC': '🏹',
+        'SUP': '❤️'
+      };
+      
+      for (const team of teams) {
+        const lines = team.members.map(m => {
+          const emoji = roleEmoji[m.role] || '•';
+          // ポイントが変わった場合は矢印で表示、変わってない場合は1つだけ表示
+          if (m.originalStrength === m.currentStrength) {
+            return `${emoji} ${m.username} (⭐${m.originalStrength})`;
+          } else {
+            const diff = m.currentStrength - m.originalStrength;
+            const arrow = diff > 0 ? '↗' : '↘';
+            return `${emoji} ${m.username} (⭐${m.originalStrength} ${arrow} ${m.currentStrength})`;
+          }
+        });
+        
+        // チーム合計も同様に表示
+        let teamTitle;
+        if (team.totalOriginal === team.totalCurrent) {
+          teamTitle = `チーム ${team.teamId}（合計⭐${team.totalOriginal}）`;
+        } else {
+          const diff = team.totalCurrent - team.totalOriginal;
+          const arrow = diff > 0 ? '↗' : '↘';
+          teamTitle = `チーム ${team.teamId}（合計⭐${team.totalOriginal} ${arrow} ${team.totalCurrent}）`;
+        }
+        
+        embed.addFields({
+          name: teamTitle,
+          value: lines.join('\n') || '（メンバーなし）',
+          inline: false
+        });
+      }
+      
+      return interaction.reply({ embeds: [embed] });
+      
+    } catch (e) {
+      console.error('[show_lane_history]', e);
+      return interaction.reply({ 
+        content: 'エラーが発生しました。', 
+        flags: MessageFlags.Ephemeral 
+      });
     }
   }
 });

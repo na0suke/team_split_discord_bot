@@ -325,6 +325,14 @@ export const getLaneTeamMembers = db.prepare(`SELECT * FROM lane_matches WHERE t
 export const getNextLaneTeamIdForGuild = db.prepare(
   `SELECT COALESCE(MAX(team_id), 0) + 1 AS next FROM lane_matches WHERE guild_id=?`
 );
+export const getLaneTeamHistory = db.prepare(`
+  SELECT DISTINCT team_id
+  FROM lane_matches
+  WHERE guild_id = ?
+  ORDER BY team_id DESC
+  LIMIT ?
+`);
+
 
 // グレースフルシャットダウン
 process.on('SIGTERM', () => {
