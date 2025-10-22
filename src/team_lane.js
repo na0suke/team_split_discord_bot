@@ -9,8 +9,11 @@ export function assignLaneTeams(participants, guildId) {
     1,
     Math.min(groups.TOP.length, groups.JG.length, groups.MID.length, groups.ADC.length, groups.SUP.length)
   );
-  const teams = Array.from({ length: teamCount }, () => ({
-    teamId: getNextLaneTeamIdForGuild.get(guildId).next,
+  
+  // ★ 修正: 最初に開始IDを取得し、各チームに連番を割り当て
+  const startTeamId = getNextLaneTeamIdForGuild.get(guildId).next;
+  const teams = Array.from({ length: teamCount }, (_, index) => ({
+    teamId: startTeamId + index,  // ← 連番で割り当て
     players: [],
     totalStrength: 0,
   }));
