@@ -45,7 +45,8 @@ import {
   upsertLaneParticipant,
   removeLaneParticipant,
   getLaneParticipantsByMessage,
-  getLaneTeamMembers
+  getLaneTeamMembers,
+  getLaneTeamHistory
 } from './db.js';
 import { splitBalanced, splitRandom } from './team.js';
 import { assignLaneTeams, formatLaneTeamsEmbed } from './team_lane.js';
@@ -1204,8 +1205,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (e) {
       console.error('[show_lane_history]', e);
       return interaction.reply({ 
-        content: 'エラーが発生しました。', 
-        flags: MessageFlags.Ephemeral 
+        content: 'エラーが発生しました。'
       });
     }
   }
