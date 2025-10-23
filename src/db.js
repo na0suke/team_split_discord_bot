@@ -322,6 +322,7 @@ ON CONFLICT(team_id, guild_id, user_id) DO UPDATE
   SET username=excluded.username, role=excluded.role, strength=excluded.strength
 `);
 export const getLaneTeamMembers = db.prepare(`SELECT * FROM lane_matches WHERE team_id=? AND guild_id=?`);
+export const getLaneTeamsByTeamId = db.prepare(`SELECT * FROM lane_matches WHERE team_id=? AND guild_id=?`);
 export const getNextLaneTeamIdForGuild = db.prepare(
   `SELECT COALESCE(MAX(team_id), 0) + 1 AS next FROM lane_matches WHERE guild_id=?`
 );
