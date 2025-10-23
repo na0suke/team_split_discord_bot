@@ -12,7 +12,9 @@ import {
   resetLossStreak,
   getStreak,
   getLossStreak,
-  getPointsConfig
+  getPointsConfig,
+  upsertLaneParticipant,
+  clearLaneSignup
 } from '../db.js';
 import { assignLaneTeams, formatLaneTeamsEmbed } from '../team_lane.js';
 import { formatResultLine } from '../utils/helpers.js';
@@ -249,8 +251,19 @@ export function handleLaneReactionAdd(reaction, user, client) {
     };
 
     if (roleMap[reaction.emoji.name]) {
-      // レーン選択処理（DB登録は省略、実際の実装では必要）
-      console.log(`${user.displayName} selected ${roleMap[reaction.emoji.name]}`);
+      // レーン選択処理 - DBに登録
+      const selectedRole = roleMap[reaction.emoji.name];
+
+      // ユーザー情報をDBに登録
+      upsertLaneParticipant.run({
+        message_id: msg.id,
+        guild_id: gid,
+        user_id: user.id,
+        username: user.displayName || user.username,
+        role: selectedRole
+      });
+
+      console.log(`${user.displayName || user.username} selected ${selectedRole}`);
       return true;
     }
 
