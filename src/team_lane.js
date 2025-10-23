@@ -5,11 +5,20 @@ export function assignLaneTeams(participants, guildId) {
   const groups = { TOP: [], JG: [], MID: [], ADC: [], SUP: [] };
   for (const p of participants) if (groups[p.role]) groups[p.role].push(p);
 
-  const teamCount = Math.max(
-    1,
-    Math.min(groups.TOP.length, groups.JG.length, groups.MID.length, groups.ADC.length, groups.SUP.length)
-  );
-  
+  // ★ 改善: 全ての人数で最多参加レーンのチーム数を基準に決定
+  const totalParticipants = participants.length;
+  let teamCount;
+
+  if (totalParticipants >= 1) {
+    // 1人以上の場合は各レーンの最大参加者数を基準にチーム数を決定
+    const maxLaneCount = Math.max(groups.TOP.length, groups.JG.length, groups.MID.length, groups.ADC.length, groups.SUP.length);
+    teamCount = maxLaneCount;
+    teamCount = Math.max(1, teamCount); // 最低1チームは作成
+  } else {
+    // 0人の場合
+    return [];
+  }
+
   // ★ 修正: 最初に開始IDを取得し、各チームに連番を割り当て
   const startTeamId = getNextLaneTeamIdForGuild.get(guildId).next;
   const teams = Array.from({ length: teamCount }, (_, index) => ({
