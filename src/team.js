@@ -113,3 +113,21 @@ export function splitRandom(players) {
     return { teamA: secondHalf, teamB: firstHalf };
   }
 }
+
+// チームメンバーを表示用にフォーマット
+export function formatTeamLines(team) {
+  return team.map((user) => {
+    const points = user.points ?? 300;
+    let displayName;
+
+    // 疑似ユーザー（name:で始まるID）の場合は、usernameをそのまま表示
+    if (user.user_id.startsWith('name:')) {
+      displayName = user.username || user.user_id.replace(/^name:/, '');
+    } else {
+      // 実際のDiscordユーザーの場合はメンション形式
+      displayName = `<@${user.user_id}>`;
+    }
+
+    return `${displayName} (⭐${points})`;
+  }).join('\n');
+}
