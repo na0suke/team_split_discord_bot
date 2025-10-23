@@ -142,3 +142,10 @@ node_modules
 .env
 data.db
 data/
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
