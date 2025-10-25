@@ -270,12 +270,16 @@ export function handleLaneReactionAdd(reaction, user, client) {
     // チーム分け実行
     if (reaction.emoji.name === '✅') {
       // この募集に登録された参加者だけ取得 → チーム分け
-      let participants = getLaneParticipantsByMessage.all(gid, msg.id, gid);
+      let participants = getLaneParticipantsByMessage.all(msg.id, gid);
+
+      // デバッグ: 参加者数を確認
+      console.log(`[DEBUG] Found ${participants.length} participants for message ${msg.id}`);
+      console.log(`[DEBUG] Participants:`, participants);
 
       // 表示名を最新に補正
       try {
         const ids = [...new Set(participants.map(p => p.userId))];
-        const fetched = msg.guild.members.fetch({ user: ids, withPresences: false });
+        const fetched = await msg.guild.members.fetch({ user: ids, withPresences: false });
         participants = participants.map(p => {
           const m = fetched.get(p.userId);
           return m ? { ...p, username: m.displayName ?? p.username } : p;

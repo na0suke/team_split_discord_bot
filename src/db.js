@@ -296,7 +296,7 @@ export const getLaneParticipantsByMessage = db.prepare(
      COALESCE(u.points, 300) AS strength
    FROM lane_signup ls
    LEFT JOIN users u
-     ON u.guild_id = ?
+     ON u.guild_id = ls.guild_id
     AND u.user_id  = ls.user_id
    WHERE ls.message_id = ?
      AND ls.guild_id  = ?`
@@ -348,3 +348,4 @@ process.on('SIGINT', () => {
 });
 
 export default db;
+
