@@ -48,18 +48,26 @@ export async function handleSignupCommands(interaction) {
 
   // --- /show_participants ---
   if (name === 'show_participants') {
+    console.log(`[DEBUG] show_participants called for guild ${gid}`);
+
     const row = latestSignupMessageId.get(gid);
+    console.log(`[DEBUG] Latest signup message:`, row);
+
     if (!row) {
       await interaction.reply('現在受付中の募集はありません。');
       return true;
     }
+
     const list = listParticipants.all(gid, row.message_id);
+    console.log(`[DEBUG] Participants found:`, list);
+
     if (!list.length) {
       await interaction.reply('現在の参加者はいません。');
       return true;
     }
+
     const names = list.map((p) => `<@${p.user_id}>`).join(', ');
-    await interaction.reply(`参加者: ${names}`);
+    await interaction.reply(`参加者 (${list.length}人): ${names}`);
     return true;
   }
 
