@@ -101,7 +101,7 @@ export async function handleReactionAdd(reaction, user, client) {
         return;
       }
 
-      const matchId = createMatch.run(gid, Date.now()).lastInsertRowid;
+      const matchId = createMatch.run(gid, msg.id, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now()).lastInsertRowid;
       setLastSignature.run(gid, result.signature);
 
       const embed = new EmbedBuilder()
@@ -139,7 +139,7 @@ export async function handleReactionAdd(reaction, user, client) {
       }
 
       const result = splitRandom(participants);
-      const matchId = createMatch.run(gid, Date.now()).lastInsertRowid;
+      const matchId = createMatch.run(gid, msg.id, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now()).lastInsertRowid;
 
       const embed = new EmbedBuilder()
         .setTitle(`ランダムチーム分け結果 (Match ID: ${matchId})`)
