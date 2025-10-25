@@ -159,15 +159,26 @@ export async function handleLaneCommands(interaction) {
           return (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99);
         });
 
-        // 各メンバーの現在のポイントを取得
-        const enrichedMembers = members.map(m => {
+        // 各メンバーの現在のポイントと表示名を取得
+        const enrichedMembers = await Promise.all(members.map(async m => {
           const currentUser = getUser.get(gid, m.user_id);
+
+          // 現在のサーバー表示名を取得
+          let currentDisplayName = m.username; // デフォルトは履歴の名前
+          try {
+            const member = await interaction.guild.members.fetch(m.user_id);
+            currentDisplayName = member.displayName ?? member.user.displayName ?? m.username;
+          } catch {
+            // ユーザーが見つからない場合は履歴の名前を使用
+          }
+
           return {
             ...m,
+            currentDisplayName,
             currentStrength: currentUser?.points ?? m.strength,
             originalStrength: m.strength
           };
-        });
+        }));
 
         const totalOriginal = enrichedMembers.reduce((sum, m) => sum + m.originalStrength, 0);
         const totalCurrent = enrichedMembers.reduce((sum, m) => sum + m.currentStrength, 0);
@@ -197,13 +208,16 @@ export async function handleLaneCommands(interaction) {
       for (const team of teams) {
         const lines = team.members.map(m => {
           const emoji = roleEmoji[m.role] || '•';
+          // 現在のサーバー表示名を使用
+          const displayName = m.currentDisplayName || m.username;
+
           // ポイントが変わった場合は矢印で表示、変わってない場合は1つだけ表示
           if (m.originalStrength === m.currentStrength) {
-            return `${emoji} ${m.username} (⭐${m.originalStrength})`;
+            return `${emoji} ${displayName} (⭐${m.originalStrength})`;
           } else {
             const diff = m.currentStrength - m.originalStrength;
             const arrow = diff > 0 ? '↗' : '↘';
-            return `${emoji} ${m.username} (⭐${m.originalStrength} ${arrow} ${m.currentStrength})`;
+            return `${emoji} ${displayName} (⭐${m.originalStrength} ${arrow} ${m.currentStrength})`;
           }
         });
 
@@ -294,13 +308,16 @@ export async function handleLaneReactionAdd(reaction, user, client) {
         console.log(`[DEBUG] Found ${participants.length} participants for message ${msg.id}`);
         console.log(`[DEBUG] Participants:`, participants);
 
-        // 表示名を最新に補正
+        // 表示名を最新に補正（サーバーでの表示名を取得）
         try {
           const ids = [...new Set(participants.map(p => p.userId))];
           const fetched = await msg.guild.members.fetch({ user: ids, withPresences: false });
           participants = participants.map(p => {
             const m = fetched.get(p.userId);
-            return m ? { ...p, username: m.displayName ?? p.username } : p;
+            return m ? {
+              ...p,
+              username: m.displayName ?? m.user.displayName ?? p.username
+            } : p;
           });
         } catch (fetchError) {
           console.log('[DEBUG] Member fetch failed, using original usernames:', fetchError.message);
