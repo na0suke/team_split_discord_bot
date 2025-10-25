@@ -213,10 +213,14 @@ ON CONFLICT(guild_id, message_id, user_id) DO NOTHING
 `);
 export const removeParticipant      = db.prepare(`DELETE FROM signup_participants WHERE guild_id=? AND message_id=? AND user_id=?`);
 export const listParticipants       = db.prepare(`
-SELECT user_id, username
-FROM signup_participants
-WHERE guild_id=? AND message_id=?
-ORDER BY username COLLATE NOCASE ASC
+SELECT 
+  sp.user_id, 
+  sp.username,
+  COALESCE(u.points, 300) AS points
+FROM signup_participants sp
+LEFT JOIN users u ON u.guild_id = sp.guild_id AND u.user_id = sp.user_id
+WHERE sp.guild_id=? AND sp.message_id=?
+ORDER BY sp.username COLLATE NOCASE ASC
 `);
 export const clearParticipantsByMessage = db.prepare(`DELETE FROM signup_participants WHERE guild_id=? AND message_id=?`);
 
