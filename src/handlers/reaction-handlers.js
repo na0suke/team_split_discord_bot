@@ -35,7 +35,8 @@ export async function handleReactionAdd(reaction, user, client) {
     // 参加リアクション
     if (emoji === JOIN_EMOJI) {
       ensureUserRow(gid, user);
-      const existing = listParticipants.get(gid, msg.id, user.id);
+      const participants = listParticipants.all(gid, msg.id);
+      const existing = participants.find(p => p.user_id === user.id);
       if (!existing) {
         addParticipant.run(gid, msg.id, user.id, user.displayName ?? user.username);
       }
