@@ -34,8 +34,14 @@ export function splitBalanced(players, lastSignature = null) {
   const n = players.length;
   if (n < 2) return { teamA: players, teamB: [], diff: 0, sumA: 0, sumB: 0, signature: null };
 
+  // ポイントが未定義の場合は300に設定
+  const normalizedPlayers = players.map(p => ({
+    ...p,
+    points: p.points ?? p.strength ?? 300
+  }));
+
   const sizeA = Math.floor(n / 2);
-  const idx = players.map((_, i) => i);
+  const idx = normalizedPlayers.map((_, i) => i);
 
   function* combos(arr, k, start = 0, acc = []) {
     if (acc.length === k) {
@@ -49,15 +55,15 @@ export function splitBalanced(players, lastSignature = null) {
     }
   }
 
-  const total = players.reduce((s, p) => s + p.points, 0);
+  const total = normalizedPlayers.reduce((s, p) => s + (p.points ?? 300), 0);
   let best = null;
 
   for (const c of combos(idx, sizeA)) {
     const setA = new Set(c);
-    const candidateA = players.filter((_, i) => setA.has(i));
-    const candidateB = players.filter((_, i) => !setA.has(i));
-    const sumA = candidateA.reduce((s, p) => s + p.points, 0);
-    const sumB = total - sumA;
+    const candidateA = normalizedPlayers.filter((_, i) => setA.has(i));
+    const candidateB = normalizedPlayers.filter((_, i) => !setA.has(i));
+    const sumA = candidateA.reduce((s, p) => s + (p.points ?? 300), 0);
+    const sumB = candidateB.reduce((s, p) => s + (p.points ?? 300), 0);
     const diff = Math.abs(sumA - sumB);
 
     // ★ 修正点: チームA/Bの決定をランダム化（偏り解消）
@@ -87,9 +93,9 @@ export function splitBalanced(players, lastSignature = null) {
         teamA, 
         teamB, 
         diff, 
-        sumA: teamA.reduce((s, p) => s + p.points, 0), 
-        sumB: teamB.reduce((s, p) => s + p.points, 0), 
-        score, 
+        sumA: teamA.reduce((s, p) => s + (p.points ?? 300), 0),
+        sumB: teamB.reduce((s, p) => s + (p.points ?? 300), 0),
+        score,
         signature: sigNow 
       };
     }

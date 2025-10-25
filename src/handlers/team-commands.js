@@ -16,9 +16,12 @@ export async function handleTeamCommands(interaction) {
 
   // --- /team ---
   if (name === 'team') {
+    // 即座にインタラクションを延期して3秒タイムアウトを回避
+    await interaction.deferReply();
+
     const row = latestSignupMessageId.get(gid);
     if (!row) {
-      await interaction.reply('現在受付中の募集はありません。');
+      await interaction.editReply('現在受付中の募集はありません。');
       return true;
     }
 
@@ -37,7 +40,7 @@ export async function handleTeamCommands(interaction) {
     }
 
     if (participants.length < 2) {
-      await interaction.reply('参加者が2人未満のため、チーム分けできません。');
+      await interaction.editReply('参加者が2人未満のため、チーム分けできません。');
       return true;
     }
 
@@ -57,7 +60,7 @@ export async function handleTeamCommands(interaction) {
     const result = splitBalanced(participants, lastSig);
 
     if (!result) {
-      await interaction.reply('チーム分けに失敗しました。');
+      await interaction.editReply('チーム分けに失敗しました。');
       return true;
     }
 
@@ -73,15 +76,18 @@ export async function handleTeamCommands(interaction) {
       )
       .setFooter({ text: `ポイント差: ${result.diff}` });
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
     return true;
   }
 
   // --- /team_simple ---
   if (name === 'team_simple') {
+    // 即座にインタラクションを延期して3秒タイムアウトを回避
+    await interaction.deferReply();
+
     const row = latestSignupMessageId.get(gid);
     if (!row) {
-      await interaction.reply('現在受付中の募集はありません。');
+      await interaction.editReply('現在受付中の募集はありません。');
       return true;
     }
 
@@ -100,7 +106,7 @@ export async function handleTeamCommands(interaction) {
     }
 
     if (participants.length < 2) {
-      await interaction.reply('参加者が2人未満のため、チーム分けできません。');
+      await interaction.editReply('参加者が2人未満のため、チーム分けできません。');
       return true;
     }
 
@@ -115,7 +121,7 @@ export async function handleTeamCommands(interaction) {
         { name: 'Team B', value: formatTeamLines(result.teamB) }
       );
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
     return true;
   }
 
