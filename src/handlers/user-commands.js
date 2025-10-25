@@ -53,7 +53,8 @@ export async function handleUserCommands(interaction) {
     }
 
     const pts = pointsArg ?? 300;
-    addParticipant.run(gid, row.message_id, uid, nameArg, pts);
+    // addParticipant: (guild_id, message_id, user_id, username) - 4つのパラメータ
+    addParticipant.run(gid, row.message_id, uid, nameArg);
 
     await interaction.reply(`${nameArg} (⭐${pts}) を参加者に追加しました。`);
     return true;
@@ -70,7 +71,8 @@ export async function handleUserCommands(interaction) {
     const losses = interaction.options.getInteger('losses', true);
 
     ensureUserRow(gid, user);
-    setUserRecord.run(wins, losses, gid, user.id);
+    // setUserRecord: (guild_id, user_id, username, wins, losses) - 固定でpoints=300
+    setUserRecord.run(gid, user.id, user.displayName || user.username, wins, losses);
 
     await interaction.reply(`<@${user.id}> の戦績を ${wins}勝${losses}敗 に設定しました。`);
     return true;
