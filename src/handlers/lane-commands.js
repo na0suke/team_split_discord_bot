@@ -238,7 +238,7 @@ export async function handleLaneCommands(interaction) {
 }
 
 // レーン指定チーム分けのリアクションイベント処理
-export function handleLaneReactionAdd(reaction, user, client) {
+export async function handleLaneReactionAdd(reaction, user, client) {
   if (user.bot) return false;
   if (!laneSignupMessages.has(reaction.message.id)) return false;
 
