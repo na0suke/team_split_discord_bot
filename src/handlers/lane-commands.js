@@ -40,7 +40,12 @@ export async function handleLaneCommands(interaction) {
     const msg = await interaction.fetchReply();
 
     // 既存の同メッセージIDの応募を初期化（再掲対策）
-    // db.clearLaneSignup(msg.id); // 必要に応じて実装
+    try {
+      clearLaneSignup.run(msg.id, interaction.guildId);
+      console.log(`[DEBUG] Cleared existing data for message ${msg.id}`);
+    } catch (clearError) {
+      console.error('[DEBUG] Failed to clear existing data:', clearError);
+    }
 
     // レーン + 実行ボタンのリアクションを付与
     const emojis = ['⚔️', '🌲', '🪄', '🏹', '❤️', '✅'];
@@ -62,8 +67,8 @@ export async function handleLaneCommands(interaction) {
     const winnerTeamId = interaction.options.getInteger('winteam', true);
     const loserTeamId = interaction.options.getInteger('loseteam', true);
 
-    const winnerTeam = getLaneTeamsByTeamId.all(gid, winnerTeamId);
-    const loserTeam = getLaneTeamsByTeamId.all(gid, loserTeamId);
+    const winnerTeam = getLaneTeamsByTeamId.all(winnerTeamId, gid);
+    const loserTeam = getLaneTeamsByTeamId.all(loserTeamId, gid);
 
     if (!winnerTeam.length) {
       await interaction.reply(`勝利チーム ID ${winnerTeamId} が見つかりません。`);
@@ -93,7 +98,7 @@ export async function handleLaneCommands(interaction) {
       incStreak.run(cfg.streak_cap, gid, member.user_id);
       resetLossStreak.run(gid, member.user_id);
       const after = before + delta;
-      winnerLines.push(formatResultLine(before, winPoints, bonus, after, member.username));
+      winnerLines.push(formatResultLine(before, winPoints, bonus, after, member.user_id, member.username));
     }
 
     // 敗者チーム処理
@@ -108,7 +113,7 @@ export async function handleLaneCommands(interaction) {
       incLossStreak.run(lcap, gid, member.user_id);
       resetStreak.run(gid, member.user_id);
       const after = before + delta;
-      loserLines.push(formatResultLine(before, lossPoints, -penalty, after, member.username));
+      loserLines.push(formatResultLine(before, lossPoints, -penalty, after, member.user_id, member.username));
     }
 
     const text = [
@@ -254,57 +259,78 @@ export function handleLaneReactionAdd(reaction, user, client) {
       // レーン選択処理 - DBに登録
       const selectedRole = roleMap[reaction.emoji.name];
 
-      // ユーザー情報をDBに登録
-      upsertLaneParticipant.run({
-        message_id: msg.id,
-        guild_id: gid,
-        user_id: user.id,
-        username: user.displayName || user.username,
-        role: selectedRole
-      });
+      try {
+        // ユーザー情報をDBに登録
+        upsertLaneParticipant.run({
+          message_id: msg.id,
+          guild_id: gid,
+          user_id: user.id,
+          username: user.displayName || user.username,
+          role: selectedRole
+        });
 
-      console.log(`${user.displayName || user.username} selected ${selectedRole}`);
+        console.log(`[DEBUG] Successfully registered: ${user.displayName || user.username} selected ${selectedRole} for message ${msg.id}`);
+      } catch (dbError) {
+        console.error(`[ERROR] Failed to register participant:`, dbError);
+        console.error(`[ERROR] Parameters:`, {
+          message_id: msg.id,
+          guild_id: gid,
+          user_id: user.id,
+          username: user.displayName || user.username,
+          role: selectedRole
+        });
+      }
+
       return true;
     }
 
     // チーム分け実行
     if (reaction.emoji.name === '✅') {
-      // この募集に登録された参加者だけ取得 → チーム分け
-      let participants = getLaneParticipantsByMessage.all(msg.id, gid);
-
-      // デバッグ: 参加者数を確認
-      console.log(`[DEBUG] Found ${participants.length} participants for message ${msg.id}`);
-      console.log(`[DEBUG] Participants:`, participants);
-
-      // 表示名を最新に補正
       try {
-        const ids = [...new Set(participants.map(p => p.userId))];
-        const fetched = await msg.guild.members.fetch({ user: ids, withPresences: false });
-        participants = participants.map(p => {
-          const m = fetched.get(p.userId);
-          return m ? { ...p, username: m.displayName ?? p.username } : p;
-        });
-      } catch {
-        // 権限やIntentが無い場合はスキップ
-      }
+        // この募集に登録された参加者だけ取得 → チーム分け
+        let participants = getLaneParticipantsByMessage.all(msg.id, gid);
 
-      if (!participants.length) {
-        msg.channel.send('この募集に登録された参加者がいません。');
+        // デバッグ: 参加者数を確認
+        console.log(`[DEBUG] Found ${participants.length} participants for message ${msg.id}`);
+        console.log(`[DEBUG] Participants:`, participants);
+
+        // 表示名を最新に補正
+        try {
+          const ids = [...new Set(participants.map(p => p.userId))];
+          const fetched = await msg.guild.members.fetch({ user: ids, withPresences: false });
+          participants = participants.map(p => {
+            const m = fetched.get(p.userId);
+            return m ? { ...p, username: m.displayName ?? p.username } : p;
+          });
+        } catch (fetchError) {
+          console.log('[DEBUG] Member fetch failed, using original usernames:', fetchError.message);
+          // 権限やIntentが無い場合はスキップ
+        }
+
+        if (!participants.length) {
+          msg.channel.send('この募集に登録された参加者がいません。');
+          return true;
+        }
+
+        const teams = assignLaneTeams(participants, gid);
+        if (!teams.length) {
+          msg.channel.send('チームを作成できませんでした。');
+          return true;
+        }
+
+        const embed = formatLaneTeamsEmbed(teams, EmbedBuilder);
+        await msg.channel.send({ embeds: [embed] });
+
+        // 多重実行を防ぐため、この募集は終了扱い
+        laneSignupMessages.delete(msg.id);
+
+        console.log(`[DEBUG] Successfully created ${teams.length} teams for message ${msg.id}`);
+        return true;
+      } catch (teamBuildError) {
+        console.error('[ERROR] Team building failed:', teamBuildError);
+        msg.channel.send('チーム分けでエラーが発生しました。');
         return true;
       }
-
-      const teams = assignLaneTeams(participants, gid);
-      if (!teams.length) {
-        msg.channel.send('チームを作成できませんでした。');
-        return true;
-      }
-
-      const embed = formatLaneTeamsEmbed(teams, EmbedBuilder);
-      msg.channel.send({ embeds: [embed] });
-
-      // 多重実行を防ぐため、この募集は終了扱い
-      laneSignupMessages.delete(msg.id);
-      return true;
     }
   } catch (e) {
     console.error('[laneReactionAdd]', e);
