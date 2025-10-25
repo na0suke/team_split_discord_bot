@@ -25,7 +25,7 @@ export async function handleUserCommands(interaction) {
     const points = interaction.options.getInteger('points', true);
 
     ensureUserRow(gid, user);
-    setStrength.run(points, gid, user.id);
+    setStrength.run(gid, user.id, user.displayName || user.username, points);
 
     await interaction.reply(`<@${user.id}> の強さを ${points} に設定しました。`);
     return true;
