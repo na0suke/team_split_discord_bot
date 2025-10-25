@@ -39,6 +39,9 @@ export async function handleReactionAdd(reaction, user, client) {
       const existing = participants.find(p => p.user_id === user.id);
       if (!existing) {
         addParticipant.run(gid, msg.id, user.id, user.displayName ?? user.username);
+        console.log(`[DEBUG] Added participant: ${user.displayName ?? user.username} (${user.id}) to message ${msg.id}`);
+      } else {
+        console.log(`[DEBUG] User ${user.displayName ?? user.username} already registered`);
       }
       return;
     }
