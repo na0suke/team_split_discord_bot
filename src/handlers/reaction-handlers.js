@@ -37,7 +37,7 @@ export async function handleReactionAdd(reaction, user, client) {
       ensureUserRow(gid, user);
       const existing = listParticipants.get(gid, msg.id, user.id);
       if (!existing) {
-        addParticipant.run(gid, msg.id, user.id, user.displayName ?? user.username, 300);
+        addParticipant.run(gid, msg.id, user.id, user.displayName ?? user.username);
       }
       return;
     }
