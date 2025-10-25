@@ -59,6 +59,30 @@ export function setupEventHandlers(client) {
 
   // リアクション追加
   client.on(Events.MessageReactionAdd, async (reaction, user) => {
+    console.log(`[DEBUG] MessageReactionAdd event received: ${reaction.emoji.name} by ${user.username} on message ${reaction.message.id}`);
+
+    // メッセージがパーシャル（キャッシュされていない）場合はフェッチ
+    if (reaction.partial) {
+      try {
+        await reaction.fetch();
+        console.log(`[DEBUG] Fetched partial reaction`);
+      } catch (error) {
+        console.error('[DEBUG] Failed to fetch partial reaction:', error);
+        return;
+      }
+    }
+
+    // ユーザーがパーシャルの場合はフェッチ
+    if (user.partial) {
+      try {
+        await user.fetch();
+        console.log(`[DEBUG] Fetched partial user`);
+      } catch (error) {
+        console.error('[DEBUG] Failed to fetch partial user:', error);
+        return;
+      }
+    }
+
     try {
       await handleReactionAdd(reaction, user, client);
     } catch (error) {
@@ -68,6 +92,7 @@ export function setupEventHandlers(client) {
 
   // リアクション削除
   client.on(Events.MessageReactionRemove, async (reaction, user) => {
+    console.log(`[DEBUG] MessageReactionRemove event received: ${reaction.emoji.name} by ${user.username}`);
     try {
       await handleReactionRemove(reaction, user);
     } catch (error) {

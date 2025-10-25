@@ -16,20 +16,34 @@ import { EmbedBuilder } from 'discord.js';
 
 // リアクションイベント処理
 export async function handleReactionAdd(reaction, user, client) {
-  if (user.bot) return;
+  console.log(`[DEBUG] Reaction event triggered: ${reaction.emoji.name} by ${user.displayName ?? user.username} on message ${reaction.message.id}`);
+
+  if (user.bot) {
+    console.log(`[DEBUG] Ignoring bot reaction`);
+    return;
+  }
 
   const msg = reaction.message;
   const gid = msg.guildId;
   const emoji = reaction.emoji.name;
 
+  console.log(`[DEBUG] Processing reaction: emoji=${emoji}, guild=${gid}, message=${msg.id}`);
+
   // レーン指定チーム分けのリアクション処理
-  if (handleLaneReactionAdd(reaction, user, client)) {
+  const laneResult = await handleLaneReactionAdd(reaction, user, client);
+  if (laneResult) {
+    console.log(`[DEBUG] Handled by lane reaction handler`);
     return;
   }
 
   // 通常の参加受付リアクション処理
   const signup = getSignup.get(gid, msg.id);
-  if (!signup) return;
+  console.log(`[DEBUG] Signup found:`, signup);
+
+  if (!signup) {
+    console.log(`[DEBUG] No signup found for message ${msg.id}`);
+    return;
+  }
 
   try {
     // 参加リアクション
