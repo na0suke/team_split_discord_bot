@@ -8,7 +8,7 @@ import {
   setLastSignature,
   getLastSignature
 } from '../db.js';
-import { splitBalanced, splitRandom, formatTeamLines } from '../team.js';
+import { splitBalanced, splitRandom, formatTeamLines, saveTeamHistory } from '../team.js';
 import { JOIN_EMOJI, OK_EMOJI, DICE_EMOJI } from '../constants.js';
 import { ensureUserRow } from '../utils/helpers.js';
 import { handleLaneReactionAdd } from './lane-commands.js';
@@ -108,7 +108,7 @@ export async function handleReactionAdd(reaction, user, client) {
 
       console.log(`[DEBUG] Calculating balanced teams...`);
       const lastSig = getLastSignature.get(gid)?.signature;
-      const result = splitBalanced(participants, lastSig);
+      const result = splitBalanced(participants, lastSig, gid); // guildIdを渡して履歴機能を有効化
 
       if (!result) {
         console.log(`[DEBUG] Team split failed`);
@@ -119,6 +119,9 @@ export async function handleReactionAdd(reaction, user, client) {
       console.log(`[DEBUG] Team split successful - A: ${result.sumA}, B: ${result.sumB}, diff: ${result.diff}`);
       const matchId = createMatch.run(gid, msg.id, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now()).lastInsertRowid;
       setLastSignature.run(gid, result.signature);
+
+      // 新しい履歴保存機能を追加
+      saveTeamHistory(gid, result.signature);
 
       const embed = new EmbedBuilder()
         .setTitle(`チーム分け結果 (Match ID: ${matchId})`)
