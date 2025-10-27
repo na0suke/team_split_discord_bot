@@ -106,13 +106,18 @@ export function splitBalanced(players, lastSignature = null) {
 
 // ランダム2分割（強さ無視）
 export function splitRandom(players) {
-  const shuffled = [...players].sort(() => Math.random() - 0.5);
+  // フィッシャー・イェーツシャッフルアルゴリズムで真のランダム化
+  const shuffled = [...players];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
   const half = Math.ceil(shuffled.length / 2);
-  
-  // ★ 修正点: チームA/Bの決定もランダム化（偏り解消）
   const firstHalf = shuffled.slice(0, half);
   const secondHalf = shuffled.slice(half);
   
+  // チームA/Bの決定もランダム化（偏り解消）
   if (Math.random() < 0.5) {
     return { teamA: firstHalf, teamB: secondHalf };
   } else {
