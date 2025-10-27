@@ -238,6 +238,38 @@ ON CONFLICT(guild_id) DO UPDATE SET signature=excluded.signature
 `);
 export const getLastSignature       = db.prepare(`SELECT signature FROM last_team_signature WHERE guild_id=?`);
 
+// ===== team_history ===== (複数回前のチーム構成を記録)
+db.exec(`
+CREATE TABLE IF NOT EXISTS team_history (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  signature  TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+`);
+
+export const addTeamHistory = db.prepare(`
+INSERT INTO team_history (guild_id, signature, created_at)
+VALUES (?, ?, ?)
+`);
+
+export const getRecentTeamHistory = db.prepare(`
+SELECT signature FROM team_history 
+WHERE guild_id = ? 
+ORDER BY created_at DESC 
+LIMIT ?
+`);
+
+export const cleanOldTeamHistory = db.prepare(`
+DELETE FROM team_history 
+WHERE guild_id = ? AND id NOT IN (
+  SELECT id FROM team_history 
+  WHERE guild_id = ? 
+  ORDER BY created_at DESC 
+  LIMIT ?
+)
+`);
+
 // ===== config =====
 export const setPointsConfig        = db.prepare(`
 INSERT INTO config (key, value) VALUES (?, ?)

@@ -6,7 +6,7 @@ import {
   setLastSignature,
   getLastSignature
 } from '../db.js';
-import { splitBalanced, splitRandom, formatTeamLines } from '../team.js';
+import { splitBalanced, splitRandom, formatTeamLines, saveTeamHistory } from '../team.js';
 import { ensureUserRow } from '../utils/helpers.js';
 
 // チーム分けコマンド処理
@@ -71,7 +71,7 @@ export async function handleTeamCommands(interaction) {
       console.log(`[DEBUG] User records updated`);
 
       const lastSig = getLastSignature.get(gid)?.signature;
-      const result = splitBalanced(participants, lastSig);
+      const result = splitBalanced(participants, lastSig, gid); // guildIdを渡して履歴機能を有効化
 
       if (!result) {
         await interaction.editReply('チーム分けに失敗しました。');
@@ -81,6 +81,9 @@ export async function handleTeamCommands(interaction) {
       console.log(`[DEBUG] Creating match record...`);
       const matchId = createMatch.run(gid, null, JSON.stringify(result.teamA.map(p => p.user_id)), JSON.stringify(result.teamB.map(p => p.user_id)), Date.now()).lastInsertRowid;
       setLastSignature.run(gid, result.signature);
+
+      // 新しい履歴保存機能を追加
+      saveTeamHistory(gid, result.signature);
 
       const embed = new EmbedBuilder()
         .setTitle(`チーム分け結果 (Match ID: ${matchId})`)
