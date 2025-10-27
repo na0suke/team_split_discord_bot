@@ -2,7 +2,7 @@ import {
   addTeamHistory,
   getRecentTeamHistory,
   cleanOldTeamHistory
-} from '../db.js';
+} from './db.js';
 
 // 強さ（points）の合計が近くなるように分割しつつ、直前と似過ぎない組合せを優先
 
