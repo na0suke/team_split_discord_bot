@@ -140,6 +140,23 @@ db.transaction(() => {
   try { db.exec(`ALTER TABLE users ADD COLUMN loss_streak INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE users ADD COLUMN max_win_streak INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE users ADD COLUMN max_loss_streak INTEGER DEFAULT 0`); } catch {}
+
+  // 既存データから最高連勝・連敗記録を初期化（一度だけ実行）
+  try {
+    db.exec(`
+      UPDATE users 
+      SET max_win_streak = win_streak 
+      WHERE max_win_streak = 0 AND win_streak > 0
+    `);
+    db.exec(`
+      UPDATE users 
+      SET max_loss_streak = loss_streak 
+      WHERE max_loss_streak = 0 AND loss_streak > 0
+    `);
+    console.log('Initialized max_win_streak and max_loss_streak from existing data');
+  } catch (e) {
+    console.log('Migration already applied or no data to migrate');
+  }
 })();
 db.exec('PRAGMA foreign_keys=ON');
 
