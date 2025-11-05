@@ -175,6 +175,10 @@ export const commands = [
     description: 'ランキング表示（例: `/rank`）'
   },
   {
+    name: 'stats',
+    description: 'サーバー統計情報を表示（例: `/stats`）'
+  },
+  {
     name: 'help',
     description: 'コマンド一覧を表示'
   }
@@ -214,6 +218,7 @@ export const commandCategories = {
   ],
   '情報表示': [
     'rank',
+    'stats',
     'help'
   ]
 };
