@@ -12,22 +12,10 @@ export function ensureUserRow(gid, user) {
 }
 
 // 結果表示用のフォーマット
-export function formatResultLine(before, delta1, delta2, after, user_id, username) {
+export function formatResultLine(before, delta1, delta2, after, displayName) {
   const d1 = delta1 >= 0 ? `+${delta1}` : `${delta1}`;
   const d2 = delta2 ? (delta2 >= 0 ? ` +${delta2}` : ` ${delta2}`) : '';
-  const base = `${before} ${d1}${d2} => ${after}`;
-
-  let label;
-  if (user_id && user_id.startsWith('name:')) {
-    label = username || user_id.replace(/^name:/, '');
-  } else if (user_id) {
-    label = `<@${user_id}>`;
-  } else {
-    // 後方互換性のため
-    label = username || before;
-  }
-
-  return `${label}: ${base}`;
+  return `${displayName}: ${before} ${d1}${d2} => ${after}`;
 }
 
 // rank表示用の名前フォーマット関数
