@@ -383,5 +383,89 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+// ===== 統計情報用クエリ =====
+
+// サーバー全体の統計
+export const getServerStats = db.prepare(`
+SELECT 
+  COUNT(DISTINCT user_id) as total_users,
+  SUM(wins + losses) as total_matches,
+  AVG(points) as avg_points,
+  MAX(points) as max_points,
+  MIN(points) as min_points
+FROM users 
+WHERE guild_id = ?
+`);
+
+// 最多連勝記録保持者
+export const getMaxWinStreakUser = db.prepare(`
+SELECT user_id, username, win_streak
+FROM users
+WHERE guild_id = ?
+ORDER BY win_streak DESC
+LIMIT 1
+`);
+
+// 最多連敗記録保持者
+export const getMaxLossStreakUser = db.prepare(`
+SELECT user_id, username, loss_streak
+FROM users
+WHERE guild_id = ?
+ORDER BY loss_streak DESC
+LIMIT 1
+`);
+
+// 最高ポイント保持者
+export const getMaxPointsUser = db.prepare(`
+SELECT user_id, username, points
+FROM users
+WHERE guild_id = ?
+ORDER BY points DESC
+LIMIT 1
+`);
+
+// 最も試合数が多いプレイヤー TOP3
+export const getTopPlayersbyMatches = db.prepare(`
+SELECT user_id, username, (wins + losses) as total_matches, wins, losses
+FROM users
+WHERE guild_id = ?
+ORDER BY total_matches DESC
+LIMIT 3
+`);
+
+// 最新N試合でのTOP3（最低試合数制限付き）
+export const getTopPlayersByRecentWinrate = db.prepare(`
+SELECT 
+  user_id, 
+  username, 
+  wins, 
+  losses,
+  (wins + losses) as total_matches,
+  CAST(wins AS REAL) / (wins + losses) as winrate
+FROM users
+WHERE guild_id = ? AND (wins + losses) >= ?
+ORDER BY winrate DESC, total_matches DESC
+LIMIT 3
+`);
+
+// Team A vs Team B の勝敗統計
+export const getTeamWinStats = db.prepare(`
+SELECT 
+  SUM(CASE WHEN winner = 'A' THEN 1 ELSE 0 END) as team_a_wins,
+  SUM(CASE WHEN winner = 'B' THEN 1 ELSE 0 END) as team_b_wins,
+  COUNT(*) as total_with_result
+FROM matches
+WHERE guild_id = ? AND winner IS NOT NULL
+`);
+
+// 直近N試合の勝敗
+export const getRecentMatchResults = db.prepare(`
+SELECT winner
+FROM matches
+WHERE guild_id = ? AND winner IS NOT NULL
+ORDER BY created_at DESC
+LIMIT ?
+`);
+
 export default db;
 

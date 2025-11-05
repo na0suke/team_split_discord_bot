@@ -12,7 +12,15 @@ import {
   resetLossStreak,
   getPointsConfig,
   updatePointsConfig,
-  topRanks
+  topRanks,
+  getServerStats,
+  getMaxWinStreakUser,
+  getMaxLossStreakUser,
+  getMaxPointsUser,
+  getTopPlayersbyMatches,
+  getTopPlayersByRecentWinrate,
+  getTeamWinStats,
+  getRecentMatchResults
 } from '../db.js';
 import { formatResultLine, tryDefer } from '../utils/helpers.js';
 
@@ -164,6 +172,58 @@ export async function handleResultAndConfigCommands(interaction) {
       return `${i + 1}. ${r.username || r.user_id} — ⭐${r.points} / ${r.wins}W-${r.losses}L / ${rate}% (WS:${r.win_streak})`;
     });
     await interaction.reply(['ランキング:', ...lines].join('\n'));
+    return true;
+  }
+
+  // --- /stats ---
+  if (name === 'stats') {
+    const stats = getServerStats.get(gid);
+
+    if (!stats || stats.total_users === 0) {
+      await interaction.reply('統計情報がまだありません。');
+      return true;
+    }
+
+    const maxWinStreakUser = getMaxWinStreakUser.get(gid);
+    const maxLossStreakUser = getMaxLossStreakUser.get(gid);
+    const topPlayersByWinrate = getTopPlayersByRecentWinrate.all(gid, 5); // 最低5試合以上
+
+    const lines = [
+      '📊 **サーバー統計情報**',
+      '',
+      '【全体】',
+      `総試合数: ${Math.floor(stats.total_matches / 2)}試合`,
+      `平均ポイント: ${Math.round(stats.avg_points || 0)}⭐`,
+      '',
+      '【記録】',
+    ];
+
+    // 最多連勝記録
+    if (maxWinStreakUser && maxWinStreakUser.win_streak > 0) {
+      lines.push(`🏆 最多連勝: ${maxWinStreakUser.username || maxWinStreakUser.user_id} (${maxWinStreakUser.win_streak}連勝)`);
+    }
+
+    // 最多連敗記録
+    if (maxLossStreakUser && maxLossStreakUser.loss_streak > 0) {
+      lines.push(`💔 最多連敗: ${maxLossStreakUser.username || maxLossStreakUser.user_id} (${maxLossStreakUser.loss_streak}連敗)`);
+    }
+
+    // 最新戦績での勝率TOP3（最低5試合参加）
+    if (topPlayersByWinrate.length > 0) {
+      lines.push('');
+      lines.push('【最新戦績での勝率 TOP3】');
+      lines.push('（最低試合参加数: 5試合）');
+      topPlayersByWinrate.slice(0, 3).forEach((p, i) => {
+        const winrate = Math.round((p.winrate || 0) * 100);
+        lines.push(`${i + 1}. ${p.username || p.user_id} — ${winrate}% (${p.wins}W-${p.losses}L)`);
+      });
+    } else {
+      lines.push('');
+      lines.push('【最新戦績での勝率 TOP3】');
+      lines.push('（データ不足: 最低5試合必要）');
+    }
+
+    await interaction.reply(lines.join('\n'));
     return true;
   }
 
