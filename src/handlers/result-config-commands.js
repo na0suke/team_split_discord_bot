@@ -68,7 +68,16 @@ export async function handleResultAndConfigCommands(interaction) {
       incStreak.run(cfg.streak_cap, gid, uid);
       resetLossStreak.run(gid, uid);
       const after = before + delta;
-      const label = beforeRow?.username || `<@${uid}>`;
+
+      // サーバー表示名を取得（ニックネーム優先）
+      let label;
+      try {
+        const member = await interaction.guild.members.fetch(uid);
+        label = member.displayName;
+      } catch {
+        label = beforeRow?.username || `<@${uid}>`;
+      }
+
       linesA.push(formatResultLine(before, cfg.win, bonus, after, label));
     }
 
@@ -85,7 +94,16 @@ export async function handleResultAndConfigCommands(interaction) {
       incLossStreak.run(lcap, gid, uid);
       resetStreak.run(gid, uid);
       const after = before + delta;
-      const label = beforeRow?.username || `<@${uid}>`;
+
+      // サーバー表示名を取得（ニックネーム優先）
+      let label;
+      try {
+        const member = await interaction.guild.members.fetch(uid);
+        label = member.displayName;
+      } catch {
+        label = beforeRow?.username || `<@${uid}>`;
+      }
+
       linesB.push(formatResultLine(before, cfg.loss, -penalty, after, label));
     }
 
