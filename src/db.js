@@ -138,6 +138,8 @@ db.transaction(() => {
   try { db.exec(`ALTER TABLE last_team_signature ADD COLUMN guild_id TEXT`); } catch {}
   try { db.exec(`ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0`); } catch {}
   try { db.exec(`ALTER TABLE users ADD COLUMN loss_streak INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE users ADD COLUMN max_win_streak INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE users ADD COLUMN max_loss_streak INTEGER DEFAULT 0`); } catch {}
 })();
 db.exec('PRAGMA foreign_keys=ON');
 
@@ -170,6 +172,36 @@ export const resetStreak     = db.prepare(`UPDATE users SET win_streak  = 0 WHER
 export const getLossStreak   = db.prepare(`SELECT loss_streak FROM users WHERE guild_id=? AND user_id=?`);
 export const incLossStreak   = db.prepare(`UPDATE users SET loss_streak = CASE WHEN loss_streak < ? THEN loss_streak + 1 ELSE loss_streak END WHERE guild_id=? AND user_id=?`);
 export const resetLossStreak = db.prepare(`UPDATE users SET loss_streak = 0 WHERE guild_id=? AND user_id=?`);
+
+// 最高連勝・連敗記録を更新
+export const updateMaxWinStreak = db.prepare(`
+UPDATE users 
+SET max_win_streak = CASE WHEN win_streak > max_win_streak THEN win_streak ELSE max_win_streak END
+WHERE guild_id=? AND user_id=?
+`);
+
+export const updateMaxLossStreak = db.prepare(`
+UPDATE users 
+SET max_loss_streak = CASE WHEN loss_streak > max_loss_streak THEN loss_streak ELSE max_loss_streak END
+WHERE guild_id=? AND user_id=?
+`);
+
+// 過去最高の連勝・連敗記録保持者を取得
+export const getMaxWinStreakUserAllTime = db.prepare(`
+SELECT user_id, username, max_win_streak
+FROM users
+WHERE guild_id = ?
+ORDER BY max_win_streak DESC
+LIMIT 1
+`);
+
+export const getMaxLossStreakUserAllTime = db.prepare(`
+SELECT user_id, username, max_loss_streak
+FROM users
+WHERE guild_id = ?
+ORDER BY max_loss_streak DESC
+LIMIT 1
+`);
 
 export const topRanks     = db.prepare(`
 SELECT

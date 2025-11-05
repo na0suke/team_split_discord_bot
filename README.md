@@ -27,7 +27,21 @@ LoL などのチーム戦に最適。均衡分け（ポイント考慮）、ラ�
 - `win a` / `win b` のショートカット  
 - `/result_team winteam:<id> loseteam:<id>` … レーンチームの勝敗登録  
 
-...
+### 統計情報 & ランキング
+- `/rank` … ⭐ポイント / W-L / 勝率 / 連勝数 を表示  
+- `/stats` … サーバー統計情報を表示
+  - 総試合数、平均ポイント
+  - 🏆 過去最高連勝記録保持者
+  - 💔 過去最高連敗記録保持者
+  - 最新20戦での勝率 TOP3（最低試合参加数: 5試合）
+
+### 設定・管理
+- `/set_strength @user <points>` … 指定ユーザーのポイントを直接設定  
+- `/set_points win:<int> loss:<int> streak_cap:<int> loss_streak_cap:<int>` … ポイント設定変更  
+- `/show_points` … 現在の設定を表示  
+- `/join_name name:<text> [points:<int>]` … サーバーにいないユーザーを疑似的に参加者に追加
+
+---
 
 ## ⚔️ 勝敗ポイントのルール
 
