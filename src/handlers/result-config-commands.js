@@ -37,12 +37,6 @@ export async function handleResultAndConfigCommands(interaction) {
       return true;
     }
 
-    if (match.winner) {
-      const msg = `マッチ ${match.id} の勝者は既に ${match.winner} で確定済みです。`;
-      await (acked ? interaction.editReply(msg) : interaction.reply(msg));
-      return true;
-    }
-
     if (!['A', 'B'].includes(winner)) {
       await (acked ? interaction.editReply('winner は A または B を指定してください。') : interaction.reply('winner は A または B を指定してください。'));
       return true;
