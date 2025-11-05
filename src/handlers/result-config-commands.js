@@ -114,11 +114,11 @@ export async function handleResultAndConfigCommands(interaction) {
     const text = [
       `勝者: Team ${winner} を登録しました。`,
       '',
-      '# Team A',
-      ...(linesA.length ? linesA : ['- 変更なし']),
+      '# 勝者',
+      ...(winner === 'A' ? (linesA.length ? linesA : ['- 変更なし']) : (linesB.length ? linesB : ['- 変更なし'])),
       '',
-      '# Team B',
-      ...(linesB.length ? linesB : ['- 変更なし']),
+      '# 敗者',
+      ...(winner === 'A' ? (linesB.length ? linesB : ['- 変更なし']) : (linesA.length ? linesA : ['- 変更なし'])),
     ].join('\n');
 
     if (acked) {
