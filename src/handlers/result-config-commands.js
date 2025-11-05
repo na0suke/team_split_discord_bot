@@ -20,7 +20,11 @@ import {
   getTopPlayersbyMatches,
   getTopPlayersByRecentWinrate,
   getTeamWinStats,
-  getRecentMatchResults
+  getRecentMatchResults,
+  updateMaxWinStreak,
+  updateMaxLossStreak,
+  getMaxWinStreakUserAllTime,
+  getMaxLossStreakUserAllTime
 } from '../db.js';
 import { formatResultLine, tryDefer } from '../utils/helpers.js';
 
@@ -68,6 +72,7 @@ export async function handleResultAndConfigCommands(interaction) {
       const delta = cfg.win + bonus;
       addWinLoss.run(1, 0, delta, gid, uid);
       incStreak.run(cfg.streak_cap, gid, uid);
+      updateMaxWinStreak.run(gid, uid); // 最高連勝記録を更新
       resetLossStreak.run(gid, uid);
       const after = before + delta;
 
@@ -94,6 +99,7 @@ export async function handleResultAndConfigCommands(interaction) {
       const delta = cfg.loss - penalty;
       addWinLoss.run(0, 1, delta, gid, uid);
       incLossStreak.run(lcap, gid, uid);
+      updateMaxLossStreak.run(gid, uid); // 最高連敗記録を更新
       resetStreak.run(gid, uid);
       const after = before + delta;
 
@@ -184,8 +190,8 @@ export async function handleResultAndConfigCommands(interaction) {
       return true;
     }
 
-    const maxWinStreakUser = getMaxWinStreakUser.get(gid);
-    const maxLossStreakUser = getMaxLossStreakUser.get(gid);
+    const maxWinStreakUserAllTime = getMaxWinStreakUserAllTime.get(gid);
+    const maxLossStreakUserAllTime = getMaxLossStreakUserAllTime.get(gid);
     const topPlayersByWinrate = getTopPlayersByRecentWinrate.all(gid, 5); // 最低5試合以上
 
     const lines = [
@@ -198,20 +204,20 @@ export async function handleResultAndConfigCommands(interaction) {
       '【記録】',
     ];
 
-    // 最多連勝記録
-    if (maxWinStreakUser && maxWinStreakUser.win_streak > 0) {
-      lines.push(`🏆 最多連勝: ${maxWinStreakUser.username || maxWinStreakUser.user_id} (${maxWinStreakUser.win_streak}連勝)`);
+    // 過去最高連勝記録
+    if (maxWinStreakUserAllTime && maxWinStreakUserAllTime.max_win_streak > 0) {
+      lines.push(`🏆 最多連勝: ${maxWinStreakUserAllTime.username || maxWinStreakUserAllTime.user_id} (${maxWinStreakUserAllTime.max_win_streak}連勝)`);
     }
 
-    // 最多連敗記録
-    if (maxLossStreakUser && maxLossStreakUser.loss_streak > 0) {
-      lines.push(`💔 最多連敗: ${maxLossStreakUser.username || maxLossStreakUser.user_id} (${maxLossStreakUser.loss_streak}連敗)`);
+    // 過去最高連敗記録
+    if (maxLossStreakUserAllTime && maxLossStreakUserAllTime.max_loss_streak > 0) {
+      lines.push(`💔 最多連敗: ${maxLossStreakUserAllTime.username || maxLossStreakUserAllTime.user_id} (${maxLossStreakUserAllTime.max_loss_streak}連敗)`);
     }
 
-    // 最新戦績での勝率TOP3（最低5試合参加）
+    // 最新20戦での勝率TOP3（最低5試合参加）
     if (topPlayersByWinrate.length > 0) {
       lines.push('');
-      lines.push('【最新戦績での勝率 TOP3】');
+      lines.push('【最新20戦での勝率 TOP3】');
       lines.push('（最低試合参加数: 5試合）');
       topPlayersByWinrate.slice(0, 3).forEach((p, i) => {
         const winrate = Math.round((p.winrate || 0) * 100);
@@ -219,7 +225,7 @@ export async function handleResultAndConfigCommands(interaction) {
       });
     } else {
       lines.push('');
-      lines.push('【最新戦績での勝率 TOP3】');
+      lines.push('【最新20戦での勝率 TOP3】');
       lines.push('（データ不足: 最低5試合必要）');
     }
 
