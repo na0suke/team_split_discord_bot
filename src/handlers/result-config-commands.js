@@ -121,10 +121,10 @@ export async function handleResultAndConfigCommands(interaction) {
       `勝者: Team ${winner} を登録しました。`,
       '',
       '# 勝者',
-      ...(winner === 'A' ? (linesA.length ? linesA : ['- 変更なし']) : (linesB.length ? linesB : ['- 変更なし'])),
+      ...(linesA.length ? linesA : ['- 変更なし']),
       '',
       '# 敗者',
-      ...(winner === 'A' ? (linesB.length ? linesB : ['- 変更なし']) : (linesA.length ? linesA : ['- 変更なし'])),
+      ...(linesB.length ? linesB : ['- 変更なし']),
     ].join('\n');
 
     if (acked) {
@@ -173,10 +173,20 @@ export async function handleResultAndConfigCommands(interaction) {
       await interaction.reply('ランキングはまだありません。');
       return true;
     }
-    const lines = rows.map((r, i) => {
+    const lines = await Promise.all(rows.map(async (r, i) => {
       const rate = Math.round((r.winrate || 0) * 100);
-      return `${i + 1}. ${r.username || r.user_id} — ⭐${r.points} / ${r.wins}W-${r.losses}L / ${rate}% (WS:${r.win_streak})`;
-    });
+
+      // サーバー表示名を取得（ニックネーム優先）
+      let displayName;
+      try {
+        const member = await interaction.guild.members.fetch(r.user_id);
+        displayName = member.displayName;
+      } catch {
+        displayName = r.username || r.user_id;
+      }
+
+      return `${i + 1}. ${displayName} — ⭐${r.points} / ${r.wins}W-${r.losses}L / ${rate}% (WS:${r.win_streak})`;
+    }));
     await interaction.reply(['ランキング:', ...lines].join('\n'));
     return true;
   }
@@ -206,12 +216,26 @@ export async function handleResultAndConfigCommands(interaction) {
 
     // 過去最高連勝記録
     if (maxWinStreakUserAllTime && maxWinStreakUserAllTime.max_win_streak > 0) {
-      lines.push(`🏆 最多連勝: ${maxWinStreakUserAllTime.username || maxWinStreakUserAllTime.user_id} (${maxWinStreakUserAllTime.max_win_streak}連勝)`);
+      let displayName;
+      try {
+        const member = await interaction.guild.members.fetch(maxWinStreakUserAllTime.user_id);
+        displayName = member.displayName;
+      } catch {
+        displayName = maxWinStreakUserAllTime.username || maxWinStreakUserAllTime.user_id;
+      }
+      lines.push(`🏆 最多連勝: ${displayName} (${maxWinStreakUserAllTime.max_win_streak}連勝)`);
     }
 
     // 過去最高連敗記録
     if (maxLossStreakUserAllTime && maxLossStreakUserAllTime.max_loss_streak > 0) {
-      lines.push(`💔 最多連敗: ${maxLossStreakUserAllTime.username || maxLossStreakUserAllTime.user_id} (${maxLossStreakUserAllTime.max_loss_streak}連敗)`);
+      let displayName;
+      try {
+        const member = await interaction.guild.members.fetch(maxLossStreakUserAllTime.user_id);
+        displayName = member.displayName;
+      } catch {
+        displayName = maxLossStreakUserAllTime.username || maxLossStreakUserAllTime.user_id;
+      }
+      lines.push(`💔 最多連敗: ${displayName} (${maxLossStreakUserAllTime.max_loss_streak}連敗)`);
     }
 
     // 最新20戦での勝率TOP3（最低5試合参加）
@@ -219,10 +243,21 @@ export async function handleResultAndConfigCommands(interaction) {
       lines.push('');
       lines.push('【最新20戦での勝率 TOP3】');
       lines.push('（最低試合参加数: 5試合）');
-      topPlayersByWinrate.slice(0, 3).forEach((p, i) => {
+
+      for (let i = 0; i < Math.min(3, topPlayersByWinrate.length); i++) {
+        const p = topPlayersByWinrate[i];
         const winrate = Math.round((p.winrate || 0) * 100);
-        lines.push(`${i + 1}. ${p.username || p.user_id} — ${winrate}% (${p.wins}W-${p.losses}L)`);
-      });
+
+        let displayName;
+        try {
+          const member = await interaction.guild.members.fetch(p.user_id);
+          displayName = member.displayName;
+        } catch {
+          displayName = p.username || p.user_id;
+        }
+
+        lines.push(`${i + 1}. ${displayName} — ${winrate}% (${p.wins}W-${p.losses}L)`);
+      }
     } else {
       lines.push('');
       lines.push('【最新20戦での勝率 TOP3】');
